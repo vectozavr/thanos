@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
 from lib.prune_opt import prune_wanda, prune_magnitude, prune_sparsegpt, prune_thanos, prune_ablate, check_sparsity, find_layers
-from lib.eval import eval_ppl, eval_zero_shot
+from lib.eval import eval_ppl
 
 # In case you want to select particular GPUs
 #os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"

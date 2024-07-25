@@ -172,6 +172,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         if f"model.layers.{i}" in model.hf_device_map:   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
             dev = model.hf_device_map[f"model.layers.{i}"]
+
             inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
             if attention_mask:
                 attention_mask = attention_mask.to(dev)
@@ -196,7 +197,6 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         for name in subset:
             print(f"pruning layer {i} name {name}")
-
             W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
 
             W_mask = (torch.zeros_like(W_metric) == 1)  ## initialize a mask to be all False
@@ -205,11 +205,9 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                 for ii in range(W_metric.shape[1]):
                     if ii % prune_m == 0:
                         tmp = W_metric[:,ii:(ii+prune_m)].float()
-                        W_mask.scatter_(1,ii+torch.topk(tmp, prune_n,zdim=1, largest=False)[1], True)
+                        W_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else:
                 sort_res = torch.sort(W_metric, dim=-1, stable=True)
-
-                sort_res_2 = torch.sort(W_metric.flatten())
 
                 if args.use_variant:
                     # wanda variant
@@ -232,17 +230,11 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                     print(f"alpha found {alpha} sparsity {cur_sparsity:.6f}")
                 else:
                     # unstructured pruning
-                    #indices = sort_res[1][:, :int(W_metric.shape[1]*args.sparsity_ratio)]
-                    #W_mask.scatter_(1, indices, True)
-
-                    values2, indices2 = torch.topk(W_metric.flatten(), int(W_metric.numel() * args.sparsity_ratio), largest=False)
-                    W_mask = torch.zeros_like(W_metric, dtype=torch.bool)
-                    W_mask.view(-1)[indices2] = True
+                    indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
+                    W_mask.scatter_(1, indices, True)
 
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
 
-        # This is one of the most stupid stuff I have seen for the last year:
-        # they repeat this complex computation twice for no reason...
         for j in range(args.nsamples):
             with torch.no_grad():
                 outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
@@ -568,8 +560,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=128,
-                            v_blocksize=512,
+                            blocksize=64,
+                            v_blocksize=1024,
                             adaptive_blocksize=False)
             gpts[name].free()
 
