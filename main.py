@@ -63,8 +63,8 @@ def main():
                         "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", "ablate_wanda_iter", "search"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
-    parser.add_argument('--save', type=str, default=None, help='Path to save results.')
-    parser.add_argument('--save_model', type=str, default=None, help='Path to save the pruned model.')
+    parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/thanos/", help='Path to save results.')
+    parser.add_argument('--save_model', type=str, default="llm_weights/llama_7b/unstructured/thanos/", help='Path to save the pruned model.')
 
     parser.add_argument("--eval_zero_shot", action="store_true")
     args = parser.parse_args()

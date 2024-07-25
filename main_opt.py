@@ -61,10 +61,10 @@ def main():
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true",
                         help="whether to use the wanda variant described in the appendix")
-    parser.add_argument('--save', type=str, default=None, help='Path to save results.')
-    parser.add_argument('--save_model', type=str, default=None, help='Path to save the pruned model.')
+    parser.add_argument('--save', type=str, default="out/opt-125m/unstructured/thanos/", help='Path to save results.')
+    parser.add_argument('--save_model', type=str, default="llm_weights/opt-125m/unstructured/thanos/", help='Path to save the pruned model.')
 
-    parser.add_argument("--eval_zero_shot", action="store_true")
+    parser.add_argument("--eval_zero_shot", action="store_true", default=True)
     args = parser.parse_args()
 
     # Setting seeds for reproducibility

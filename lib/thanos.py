@@ -56,26 +56,28 @@ class Thanos:
         rows = W.shape[0]
         columns = W.shape[1]
 
-        # Wanda metric
-        #tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
+        use_global_mask = False
 
-        # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
-        # because it will produce the same number of non-zero elements
-        # TODO: this is old solution, now we try with global mask
-        #values, indices = torch.topk(tmp.flatten(), int(tmp.numel() * sparsity), largest=False)
-        #mask = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
-        #mask.view(-1)[indices] = True
+        if use_global_mask:
+            # Global Wanda metric
+            glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:].reshape((1, -1)))
 
-        # Global Wanda metric
-        glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:].reshape((1, -1)))
+            estimate_zeros = int(sparsity*rows*columns - zeros)
 
-        estimate_zeros = int(sparsity*rows*columns - zeros)
+            values, indices = torch.topk(glob_tmp.flatten(), estimate_zeros, largest=False)
+            glob_mask = torch.zeros_like(W[:, i1:], dtype=torch.bool, device=self.dev)
+            glob_mask.view(-1)[indices] = True
 
-        values, indices = torch.topk(glob_tmp.flatten(), estimate_zeros, largest=False)
-        glob_mask = torch.zeros_like(W[:, i1:], dtype=torch.bool, device=self.dev)
-        glob_mask.view(-1)[indices] = True
+            mask = glob_mask[:, :blocksize]
+        else:
+            # Wanda metric
+            tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
 
-        mask = glob_mask[:, :blocksize]
+            # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
+            # because it will produce the same number of non-zero elements
+            values, indices = torch.topk(tmp.flatten(), int(tmp.numel() * sparsity), largest=False)
+            mask = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
+            mask.view(-1)[indices] = True
 
         # Here we compute how many elements we remove at once for each row (this is to make appropriate paddings)
         num_lambdas_for_each_row = mask.sum(dim=1)
