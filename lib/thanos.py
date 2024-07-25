@@ -49,21 +49,39 @@ class Thanos:
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         self.H += inp.matmul(inp.t())
 
-    def __unstructured(self, W, Hinv, i1, i2, sparsity, v_blocksize):
+    def __unstructured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize):
         W1 = W[:, i1:i2]
+        blocksize = i2 - i1
+
+        rows = W.shape[0]
+        columns = W.shape[1]
 
         # Wanda metric
-        tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
+        #tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
 
         # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
         # because it will produce the same number of non-zero elements
-        values, indices = torch.topk(tmp.flatten(), int(tmp.numel() * sparsity), largest=False)
-        mask = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
-        mask.view(-1)[indices] = True
+        # TODO: this is old solution, now we try with global mask
+        #values, indices = torch.topk(tmp.flatten(), int(tmp.numel() * sparsity), largest=False)
+        #mask = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
+        #mask.view(-1)[indices] = True
+
+        # Global Wanda metric
+        glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:].reshape((1, -1)))
+
+        estimate_zeros = int(sparsity*rows*columns - zeros)
+
+        values, indices = torch.topk(glob_tmp.flatten(), estimate_zeros, largest=False)
+        glob_mask = torch.zeros_like(W[:, i1:], dtype=torch.bool, device=self.dev)
+        glob_mask.view(-1)[indices] = True
+
+        mask = glob_mask[:, :blocksize]
 
         # Here we compute how many elements we remove at once for each row (this is to make appropriate paddings)
         num_lambdas_for_each_row = mask.sum(dim=1)
         max_non_zeros = (num_lambdas_for_each_row.max()).item()
+
+        new_zeros = torch.sum(num_lambdas_for_each_row)
 
         non_zero_indices = torch.nonzero(mask, as_tuple=False)
         cols_indices = non_zero_indices[:, 1]
@@ -115,6 +133,8 @@ class Thanos:
 
         # To avoid deviations from zero after the update
         W1[mask] = 0
+
+        return new_zeros
 
     # The code for this function is much easier to comprehend because here we do not need to pad indices and R_hat
     def __structured(self, W, Hinv, i1, i2, prune_n, prune_m, v_blocksize):
@@ -192,15 +212,15 @@ class Thanos:
         Hinv = torch.linalg.inv(H)
 
         tick = time.time()
+        zeros = 0
 
-        # TODO: move it from here
         v_blocksize = min(self.rows, v_blocksize)
 
         for i1 in range(0, self.columns, blocksize):
             i2 = min(i1 + blocksize, self.columns)
 
             if prune_n == 0:  # unstructured
-                self.__unstructured(W, Hinv, i1, i2, sparsity, v_blocksize)
+                zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
             else:  # structured n:m sparsity
                 self.__structured(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
 
