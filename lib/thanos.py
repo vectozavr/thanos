@@ -56,7 +56,8 @@ class Thanos:
         rows = W.shape[0]
         columns = W.shape[1]
 
-        use_global_mask = False
+        # TODO: move it from here
+        use_global_mask = True
 
         if use_global_mask:
             # Global Wanda metric

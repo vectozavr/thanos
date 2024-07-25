@@ -64,7 +64,7 @@ def main():
     parser.add_argument('--save', type=str, default="out/opt-125m/unstructured/thanos/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, default="llm_weights/opt-125m/unstructured/thanos/", help='Path to save the pruned model.')
 
-    parser.add_argument("--eval_zero_shot", action="store_true", default=True)
+    parser.add_argument("--eval_zero_shot", action="store_true", default=False)
     args = parser.parse_args()
 
     # Setting seeds for reproducibility
@@ -129,6 +129,10 @@ def main():
 
         task_list = ["boolq", "rte", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"]
         num_shot = 0
+
+        #device = torch.device("cpu")
+        #model.to(device)
+
         results = eval_zero_shot(args.model, model, tokenizer, task_list, num_shot, accelerate)
         print("********************************")
         print("zero_shot evaluation results")
