@@ -89,6 +89,7 @@ class Thanos:
         non_zero_indices = torch.nonzero(mask, as_tuple=False)
         cols_indices = non_zero_indices[:, 1]
 
+
         # Here we generate the tensor of indices for removal for each row.
         # The main problem is that there might be different values for each row, so we pad remaining indices with -1
         padded_indices_to_remove = torch.full((self.rows, max_non_zeros), -1, dtype=torch.int64, device=self.dev)
@@ -133,7 +134,7 @@ class Thanos:
             # Solve a batch of linear systems and update weights
             lambdas = torch.linalg.solve(R_hat, b[r1:r2]).unsqueeze(2)
             W[r1:r2, i1:] -= torch.bmm(R, lambdas).squeeze(2)
-
+        
         # To avoid deviations from zero after the update
         W1[mask] = 0
 
@@ -170,7 +171,7 @@ class Thanos:
         W1[mask] = 0
 
     def __compute_l2_loss(self, W, old_W):
-        if hasattr(self, 'X'):
+        if not hasattr(self, 'X'):
             raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
 
         dW = W - old_W
@@ -200,7 +201,7 @@ class Thanos:
         W = W.float()
 
         if adaptive_blocksize:
-            blocksize = int(self.columns/16)
+            blocksize = int(self.columns/32)
 
         H = self.H
         del self.H

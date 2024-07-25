@@ -55,17 +55,17 @@ def main():
     # meta-llama/Meta-Llama-3-70B
 
     parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-7b-hf")
-    #parser.add_argument('--model', type=str, help='LLaMA model', default="llm_weights/llama_7b/unstructured/wanda")
+    #parser.add_argument('--model', type=str, help='LLaMA model', default="llm_weights/pruned_llama2_7b/unstructured/thanos_blocksize_128_dynamic_mask")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos",
-                        "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", "ablate_wanda_iter", "search"], default="wanda")
+                        "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", "ablate_wanda_iter", "search"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
-    parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/wanda/", help='Path to save results.')
-    parser.add_argument('--save_model', type=str, default="llm_weights/pruned_llama2_7b/unstructured/wanda/", help='Path to save the pruned model.')
+    parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/thanos_blocksize_128_dynamic_mask/", help='Path to save results.')
+    parser.add_argument('--save_model', type=str, default="llm_weights/pruned_llama2_7b/unstructured/thanos_blocksize_adaptive_blocksize_dynamic_mask/", help='Path to save the pruned model.')
 
     args = parser.parse_args()
 
@@ -123,7 +123,7 @@ def main():
         print("method\tactual_sparsity\tppl_test", file=f, flush=True)
         print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}", file=f, flush=True)
 
-    if args.save_model:
+    if args.save_model and args.sparsity_ratio != 0:
         model.save_pretrained(args.save_model)
         tokenizer.save_pretrained(args.save_model)
 

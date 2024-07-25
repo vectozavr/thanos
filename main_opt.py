@@ -62,7 +62,7 @@ def main():
     parser.add_argument('--use_variant', action="store_true",
                         help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default="out/opt-125m/unstructured/thanos/", help='Path to save results.')
-    parser.add_argument('--save_model', type=str, default="llm_weights/opt-125m/unstructured/thanos/", help='Path to save the pruned model.')
+    parser.add_argument('--save_model', type=str, default="llm_weights/opt-125m/unstructured/thanos_blocksize_128_dynamic_mask_no_change/", help='Path to save the pruned model.')
 
     parser.add_argument("--eval_zero_shot", action="store_true", default=False)
     args = parser.parse_args()
@@ -122,23 +122,7 @@ def main():
         print("method\tactual_sparsity\tppl_test", file=f, flush=True)
         print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}", file=f, flush=True)
 
-    if args.eval_zero_shot:
-        accelerate = False
-        if "30b" in args.model or "66b" in args.model:
-            accelerate = True
-
-        task_list = ["boolq", "rte", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"]
-        num_shot = 0
-
-        #device = torch.device("cpu")
-        #model.to(device)
-
-        results = eval_zero_shot(args.model, model, tokenizer, task_list, num_shot, accelerate)
-        print("********************************")
-        print("zero_shot evaluation results")
-        print(results)
-
-    if args.save_model:
+    if args.save_model and args.sparsity_ratio != 0:
         model.save_pretrained(args.save_model)
         tokenizer.save_pretrained(args.save_model)
 

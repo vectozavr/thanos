@@ -9,6 +9,7 @@ from .data import get_loaders
 def eval_ppl(args, model, tokenizer, device=torch.device("cuda:0")):
     # Set dataset
     dataset = "wikitext2"
+    #dataset = "c4"
 
     # Print status
     print(f"evaluating on {dataset}")
