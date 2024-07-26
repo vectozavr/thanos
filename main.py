@@ -7,7 +7,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
-from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, prune_ablate, check_sparsity, find_layers
+from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, prune_ablate, check_sparsity
 from lib.eval import eval_ppl
 
 # In case you want to select particular GPUs
@@ -65,7 +65,7 @@ def main():
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/thanos_blocksize_128_dynamic_mask/", help='Path to save results.')
-    parser.add_argument('--save_model', type=str, default="llm_weights/pruned_llama2_7b/unstructured/thanos_blocksize_adaptive_blocksize_dynamic_mask/", help='Path to save the pruned model.')
+    parser.add_argument('--save_model', type=str, default="llm_weights/pruned_llama2_7b/unstructured/thanos_adaptive_blocksize_dynamic_mask/", help='Path to save the pruned model.')
 
     args = parser.parse_args()
 

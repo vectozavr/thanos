@@ -201,7 +201,7 @@ class Thanos:
         W = W.float()
 
         if adaptive_blocksize:
-            blocksize = int(self.columns/32)
+            blocksize = int(self.columns/64)
 
         H = self.H
         del self.H

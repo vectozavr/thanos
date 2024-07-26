@@ -561,7 +561,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_m=prune_m,
                             percdamp=0.01,
                             blocksize=256,
-                            v_blocksize=256,
+                            v_blocksize=512,
                             adaptive_blocksize=True)
             gpts[name].free()
 
