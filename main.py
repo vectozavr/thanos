@@ -99,10 +99,10 @@ def main():
             prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "sparsegpt":
             prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        elif args.prune_method == "thanos":
+            prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif "ablate" in args.prune_method:
             prune_ablate(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif "thanos" in args.prune_method:
-            prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
 
         print(args.prune_method + ' time %.2f' % (time.time() - tick))
 

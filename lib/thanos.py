@@ -140,18 +140,36 @@ class Thanos:
 
         return new_zeros
 
+    def __structured_n_m_sparsity_mask(self, tmp, prune_n, prune_m):
+        rows, cols = tmp.shape
+        # Calculate the number of chunks per row
+        num_chunks = cols // prune_m
+
+        # Reshape tensor to (rows, num_chunks, m)
+        reshaped_tensor = tmp.reshape(rows, num_chunks, prune_m)
+
+        # Find the indices of the n smallest elements in each chunk
+        _, indices = torch.topk(reshaped_tensor, prune_n, dim=2, largest=False)
+
+        # Create a mask for each chunk
+        chunk_mask = torch.zeros_like(reshaped_tensor, dtype=torch.bool)
+        chunk_mask.scatter_(2, indices, True)
+
+        # Reshape the chunk mask back to the original tensor shape
+        mask = chunk_mask.reshape(rows, num_chunks * prune_m)
+
+        return mask
+
     # The code for this function is much easier to comprehend because here we do not need to pad indices and R_hat
     def __structured(self, W, Hinv, i1, i2, prune_n, prune_m, v_blocksize):
         W1 = W[:, i1:i2]
+        blocksize = i2 - i1
 
         # Wanda metric
         tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
+        mask = self.__structured_n_m_sparsity_mask(tmp, prune_n, prune_m)
 
-        val, ind = torch.topk(tmp, prune_n, dim=1, largest=False)
-        mask = torch.zeros_like(tmp, dtype=torch.bool)
-        mask.scatter_(1, ind, True)
-
-        indices = torch.arange(0, prune_m, device=self.dev).unsqueeze(0).repeat(self.rows, 1)
+        indices = torch.arange(0, blocksize, device=self.dev).unsqueeze(0).repeat(self.rows, 1)
         indices_to_remove = indices[mask].reshape(self.rows, -1)
 
         b = W1[mask].reshape(self.rows, -1)
@@ -161,7 +179,7 @@ class Thanos:
             r2 = min(r1 + v_blocksize, self.rows)
 
             R = Hinv[indices_to_remove[r1:r2]].transpose(1, 2)
-            batch_indices = torch.arange(v_blocksize).view(-1, 1).expand(-1, prune_n)
+            batch_indices = torch.arange(v_blocksize).view(-1, 1).expand(-1, blocksize//2)
             R_hat = R[batch_indices, indices_to_remove[r1:r2]]
 
             lambdas = torch.linalg.solve(R_hat, b[r1:r2]).unsqueeze(2)
@@ -201,7 +219,7 @@ class Thanos:
         W = W.float()
 
         if adaptive_blocksize:
-            blocksize = int(self.columns/64)
+            blocksize = int(self.columns/32)
 
         H = self.H
         del self.H
