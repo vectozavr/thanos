@@ -50,11 +50,11 @@ def main():
     # facebook/opt-175b
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-2.7b")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
-    parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="4:8")
+    parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="2:4")
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos",
                                                              "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter",
                                                              "ablate_wanda_iter", "search"], default="thanos")

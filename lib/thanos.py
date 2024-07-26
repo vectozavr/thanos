@@ -173,7 +173,6 @@ class Thanos:
         indices_to_remove = indices[mask].reshape(self.rows, -1)
 
         b = W1[mask].reshape(self.rows, -1)
-
         for r in range(int(self.rows / v_blocksize)):
             r1 = r * v_blocksize
             r2 = min(r1 + v_blocksize, self.rows)
@@ -219,7 +218,7 @@ class Thanos:
         W = W.float()
 
         if adaptive_blocksize:
-            blocksize = int(self.columns/32)
+            blocksize = int(self.columns/16)
 
         H = self.H
         del self.H
