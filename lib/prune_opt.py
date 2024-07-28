@@ -230,6 +230,8 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     print('Ready.')
 
+    average_l2_loss = 0
+
     for i in range(len(layers)):
         layer = layers[i]
         if f"model.layers.{i}" in model.hf_device_map:
@@ -241,7 +243,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         gpts = {}
         for name in subset:
-            gpts[name] = SparseGPT(subset[name])
+            gpts[name] = SparseGPT(subset[name], store_inputs=True)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -262,6 +264,10 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             print('Pruning ...')
 
             gpts[name].fasterprune(args.sparsity_ratio, prune_n=prune_n, prune_m=prune_m, percdamp=0.01, blocksize=128)
+
+            if gpts[name].l2_loss is not None:
+                average_l2_loss += gpts[name].l2_loss.item() / len(gpts)
+
             gpts[name].free()
 
         for j in range(args.nsamples):
@@ -271,6 +277,10 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         torch.cuda.empty_cache()
 
         inps, outs = outs, inps
+
+    if average_l2_loss != 0:
+        average_l2_loss /= len(layers)
+        print("Average L2 loss =", average_l2_loss)
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
@@ -414,6 +424,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     print('Ready.')
 
+    average_l2_loss = 0
+
     for i in range(len(layers)):
         layer = layers[i]
         if f"model.layers.{i}" in model.hf_device_map:
@@ -425,7 +437,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         gpts = {}
         for name in subset:
-            gpts[name] = Thanos(subset[name])
+            gpts[name] = Thanos(subset[name], store_inputs=True)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -445,13 +457,22 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             print(i, name)
             print('Pruning ...')
 
+
             gpts[name].snap(args.sparsity_ratio,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=256,
-                            v_blocksize=256,
-                            adaptive_blocksize=True)
+                            blocksize=128,
+                            v_blocksize=512,
+                            adaptive_blocksize=False)
+
+            #gpts[name].slowprune(args.sparsity_ratio,
+            #                     percdamp=0.01,
+            #                     blocksize=64)
+
+            if gpts[name].l2_loss is not None:
+                average_l2_loss += gpts[name].l2_loss.item() / len(gpts)
+
             gpts[name].free()
 
         for j in range(args.nsamples):
@@ -461,6 +482,10 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         torch.cuda.empty_cache()
 
         inps, outs = outs, inps
+
+    if average_l2_loss != 0:
+        average_l2_loss /= len(layers)
+        print("Average L2 loss =", average_l2_loss)
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()

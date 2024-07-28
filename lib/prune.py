@@ -522,6 +522,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     print('Ready.')
 
+    average_l2_loss = 0
+
     for i in range(len(layers)):
         layer = layers[i]
         if f"model.layers.{i}" in model.hf_device_map:
@@ -560,9 +562,13 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=256,
+                            blocksize=128,
                             v_blocksize=512,
-                            adaptive_blocksize=True)
+                            adaptive_blocksize=False)
+
+            if gpts[name].l2_loss is not None:
+                average_l2_loss += gpts[name].l2_loss / len(gpts)
+
             gpts[name].free()
 
 
@@ -574,6 +580,10 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         torch.cuda.empty_cache()
 
         inps, outs = outs, inps
+
+    if average_l2_loss != 0:
+        average_l2_loss /= len(layers)
+        print("Average L2 loss =", average_l2_loss)
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()

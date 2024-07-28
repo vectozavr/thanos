@@ -25,6 +25,7 @@ class Thanos:
 
         self.scaler_row = torch.zeros((self.columns), device=self.dev)
 
+        self.l2_loss = None
         if store_inputs:
             self.X = []
 
@@ -51,10 +52,8 @@ class Thanos:
 
     def __unstructured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize):
         W1 = W[:, i1:i2]
-        blocksize = i2 - i1
 
-        rows = W.shape[0]
-        columns = W.shape[1]
+        blocksize = i2 - i1
 
         # TODO: move it from here
         use_global_mask = True
@@ -63,8 +62,10 @@ class Thanos:
             # Global Wanda metric
             glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:].reshape((1, -1)))
 
-            estimate_zeros = int(sparsity*rows*columns - zeros)
+            estimate_zeros = int(sparsity*self.rows*self.columns - zeros)
 
+            # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
+            # because it will produce the same number of non-zero elements
             values, indices = torch.topk(glob_tmp.flatten(), estimate_zeros, largest=False)
             glob_mask = torch.zeros_like(W[:, i1:], dtype=torch.bool, device=self.dev)
             glob_mask.view(-1)[indices] = True
@@ -74,8 +75,6 @@ class Thanos:
             # Wanda metric
             tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
 
-            # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
-            # because it will produce the same number of non-zero elements
             values, indices = torch.topk(tmp.flatten(), int(tmp.numel() * sparsity), largest=False)
             mask = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
             mask.view(-1)[indices] = True
@@ -88,7 +87,6 @@ class Thanos:
 
         non_zero_indices = torch.nonzero(mask, as_tuple=False)
         cols_indices = non_zero_indices[:, 1]
-
 
         # Here we generate the tensor of indices for removal for each row.
         # The main problem is that there might be different values for each row, so we pad remaining indices with -1
@@ -103,10 +101,17 @@ class Thanos:
         b = torch.zeros((self.rows, max_non_zeros), dtype=W1.dtype, device=self.dev)
         b[valid_indices_mask] = W1[torch.arange(self.rows, device=self.dev).unsqueeze(1), padded_indices_to_remove][valid_indices_mask]
 
+        v_blocksize = min(self.rows, v_blocksize)
+
         # We divide rows into equal blocks because otherwise we could not fit into GPUs memory
-        for r in range(int(self.rows / v_blocksize)):
+        for r in range(self.rows // v_blocksize + 1):
             r1 = r * v_blocksize
+            if r1 > self.rows:
+                continue
+
             r2 = min(r1 + v_blocksize, self.rows)
+
+            v_current_block = min(self.rows - r1, v_blocksize)
 
             num_lambdas_for_current_block = num_lambdas_for_each_row[r1:r2]
 
@@ -114,14 +119,14 @@ class Thanos:
             # the padded part of R_hat. We can leave R as it is because corresponding lambdas will be zero, so
             # the padded columns/rows will not have any effect on dW
             R = Hinv[padded_indices_to_remove[r1:r2]].transpose(1, 2)
-            batch_indices = torch.arange(v_blocksize, device=self.dev).view(-1, 1).expand(-1, max_non_zeros)
+            batch_indices = torch.arange(v_current_block, device=self.dev).view(-1, 1).expand(-1, max_non_zeros)
             R_hat = R[batch_indices, padded_indices_to_remove[r1:r2]]
 
             # Make R_hat block-diagonal in the bottom-right
-            row_indices = torch.arange(max_non_zeros, device=self.dev).unsqueeze(1).unsqueeze(0).expand(v_blocksize,
+            row_indices = torch.arange(max_non_zeros, device=self.dev).unsqueeze(1).unsqueeze(0).expand(v_current_block,
                                                                                                         max_non_zeros,
                                                                                                         max_non_zeros)
-            col_indices = torch.arange(max_non_zeros, device=self.dev).unsqueeze(0).unsqueeze(1).expand(v_blocksize,
+            col_indices = torch.arange(max_non_zeros, device=self.dev).unsqueeze(0).unsqueeze(1).expand(v_current_block,
                                                                                                         max_non_zeros,
                                                                                                         max_non_zeros)
 
@@ -134,7 +139,7 @@ class Thanos:
             # Solve a batch of linear systems and update weights
             lambdas = torch.linalg.solve(R_hat, b[r1:r2]).unsqueeze(2)
             W[r1:r2, i1:] -= torch.bmm(R, lambdas).squeeze(2)
-        
+
         # To avoid deviations from zero after the update
         W1[mask] = 0
 
@@ -173,12 +178,44 @@ class Thanos:
         indices_to_remove = indices[mask].reshape(self.rows, -1)
 
         b = W1[mask].reshape(self.rows, -1)
-        for r in range(int(self.rows / v_blocksize)):
+        for r in range(self.rows // v_blocksize):
             r1 = r * v_blocksize
             r2 = min(r1 + v_blocksize, self.rows)
 
             R = Hinv[indices_to_remove[r1:r2]].transpose(1, 2)
             batch_indices = torch.arange(v_blocksize).view(-1, 1).expand(-1, blocksize//2)
+            R_hat = R[batch_indices, indices_to_remove[r1:r2]]
+
+            lambdas = torch.linalg.solve(R_hat, b[r1:r2]).unsqueeze(2)
+
+            W[r1:r2, i1:] -= torch.bmm(R, lambdas).squeeze(2)
+
+        W1[mask] = 0
+
+    def __semistructured(self, W, Hinv, i1, i2, sparsity, v_blocksize):
+        blocksize = i2 - i1
+        W1 = W[:, i1:i2]
+
+        rows, cols = W1.shape
+
+        num_lambdas = int(blocksize * sparsity)
+        tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
+
+        val, ind = torch.topk(tmp, num_lambdas, dim=1, largest=False)
+        mask = torch.zeros_like(tmp, dtype=torch.bool)
+        mask.scatter_(1, ind, True)
+
+        indices = torch.arange(0, blocksize, device=self.dev).unsqueeze(0).repeat(rows, 1)
+        indices_to_remove = indices[mask].reshape(rows, -1)
+
+        b = W1[mask].reshape(rows, -1)
+
+        for r in range(rows // v_blocksize):
+            r1 = r * v_blocksize
+            r2 = min(r1 + v_blocksize, rows)
+
+            R = Hinv[indices_to_remove[r1:r2]].transpose(1, 2)
+            batch_indices = torch.arange(v_blocksize).view(-1, 1).expand(-1, num_lambdas)
             R_hat = R[batch_indices, indices_to_remove[r1:r2]]
 
             lambdas = torch.linalg.solve(R_hat, b[r1:r2]).unsqueeze(2)
@@ -218,7 +255,7 @@ class Thanos:
         W = W.float()
 
         if adaptive_blocksize:
-            blocksize = int(self.columns/16)
+            blocksize = self.columns // 16
 
         H = self.H
         del self.H
@@ -235,13 +272,21 @@ class Thanos:
         tick = time.time()
         zeros = 0
 
-        v_blocksize = min(self.rows, v_blocksize)
+        # Global Wanda mask
+        '''
+        num_lambdas = int(self.columns * sparsity)
+        tmp = torch.abs(W) * torch.sqrt(self.scaler_row.reshape((1, -1)))
+        val, ind = torch.topk(tmp, num_lambdas, dim=1, largest=False)
+        mask_global = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
+        mask_global.scatter_(1, ind, True)
+        '''
 
         for i1 in range(0, self.columns, blocksize):
             i2 = min(i1 + blocksize, self.columns)
 
             if prune_n == 0:  # unstructured
                 zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
+                #self.__semistructured(W, Hinv, i1, i2, sparsity, v_blocksize)
             else:  # structured n:m sparsity
                 self.__structured(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
 
@@ -256,7 +301,8 @@ class Thanos:
         self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
 
         if hasattr(self, 'X'):
-            print("Summ(|dW X_j|^2_1,2) =", self.__compute_l2_loss(W, old_W))
+            self.l2_loss = self.__compute_l2_loss(W, old_W)
+            print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     # This is the first version of Thanos with its naive implementation without vectorization.
     # It is much easier to read and understand. Essentially, this represents what is really going on inside Thanos.

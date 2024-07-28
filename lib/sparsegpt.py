@@ -11,7 +11,7 @@ torch.backends.cudnn.allow_tf32 = False
 ## SparseGPT: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
 class SparseGPT:
 
-    def __init__(self, layer):
+    def __init__(self, layer, store_inputs=False):
         self.layer = layer
         self.dev = self.layer.weight.device
         W = layer.weight.data.clone()
@@ -24,6 +24,10 @@ class SparseGPT:
         self.H = torch.zeros((self.columns, self.columns), device=self.dev)
         self.nsamples = 0
 
+        self.l2_loss = None
+        if store_inputs:
+            self.X = []
+
     def add_batch(self, inp, out):
         if len(inp.shape) == 2:
             inp = inp.unsqueeze(0)
@@ -32,15 +36,41 @@ class SparseGPT:
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
             inp = inp.t()
+
+        if hasattr(self, 'X'):
+            self.X.append(inp)
+
         self.H *= self.nsamples / (self.nsamples + tmp)
         self.nsamples += tmp
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         self.H += inp.matmul(inp.t())
 
+    def __compute_l2_loss(self, W, old_W):
+        if not hasattr(self, 'X'):
+            raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
+
+        dW = W - old_W
+        loss = 0
+
+        for Xj in self.X:
+            dW = dW.float()
+            Xj = Xj.float()
+
+            mult = dW @ Xj
+            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
+            loss += l12
+        loss /= len(self.X)
+
+        return loss
+
     def fasterprune(
         self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01
     ):
         W = self.layer.weight.data.clone()
+
+        if hasattr(self, 'X'):
+            old_W = W.clone()
+
         if isinstance(self.layer, nn.Conv2d):
             W = W.flatten(1)
         if isinstance(self.layer, transformers.Conv1D):
@@ -114,6 +144,11 @@ class SparseGPT:
         if isinstance(self.layer, transformers.Conv1D):
             W = W.t()
         self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
+
+
+        if hasattr(self, 'X'):
+            self.l2_loss = self.__compute_l2_loss(W, old_W)
+            print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     def free(self):
         self.H = None
