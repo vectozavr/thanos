@@ -45,11 +45,10 @@ class SparseGPT:
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         self.H += inp.matmul(inp.t())
 
-    def __compute_l2_loss(self, W, old_W):
+    def __compute_l2_loss(self, dW):
         if not hasattr(self, 'X'):
             raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
 
-        dW = W - old_W
         loss = 0
 
         for Xj in self.X:
@@ -147,7 +146,7 @@ class SparseGPT:
 
 
         if hasattr(self, 'X'):
-            self.l2_loss = self.__compute_l2_loss(W, old_W)
+            self.l2_loss = self.__compute_l2_loss(W - old_W)
             print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     def free(self):

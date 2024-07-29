@@ -57,7 +57,7 @@ def main():
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos",
                                                              "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter",
-                                                             "ablate_wanda_iter", "search"], default="thanos")
+                                                             "ablate_wanda_iter", "search"], default="wanda")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true",
                         help="whether to use the wanda variant described in the appendix")

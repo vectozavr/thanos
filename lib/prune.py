@@ -90,7 +90,6 @@ def prepare_calibration_input(model, dataloader, device):
     model.config.use_cache = False
     layers = model.model.layers
 
-    # dev = model.hf_device_map["model.embed_tokens"]
     if "model.embed_tokens" in model.hf_device_map:
         device = model.hf_device_map["model.embed_tokens"]
 
@@ -562,8 +561,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=128,
-                            v_blocksize=512,
+                            blocksize=512,
+                            v_blocksize=128,
                             adaptive_blocksize=False)
 
             if gpts[name].l2_loss is not None:

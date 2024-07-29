@@ -224,11 +224,10 @@ class Thanos:
 
         W1[mask] = 0
 
-    def __compute_l2_loss(self, W, old_W):
+    def __compute_l2_loss(self, dW):
         if not hasattr(self, 'X'):
             raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
 
-        dW = W - old_W
         loss = 0
 
         for Xj in self.X:
@@ -255,7 +254,7 @@ class Thanos:
         W = W.float()
 
         if adaptive_blocksize:
-            blocksize = self.columns // 16
+            blocksize = self.columns // 8
 
         H = self.H
         del self.H
@@ -301,7 +300,7 @@ class Thanos:
         self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
 
         if hasattr(self, 'X'):
-            self.l2_loss = self.__compute_l2_loss(W, old_W)
+            self.l2_loss = self.__compute_l2_loss(W - old_W)
             print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     # This is the first version of Thanos with its naive implementation without vectorization.
@@ -377,7 +376,7 @@ class Thanos:
         self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
 
         if hasattr(self, 'X'):
-            print("Summ(|dW X_j|^2_1,2) =", self.__compute_l2_loss(W, old_W))
+            print("Summ(|dW X_j|^2_1,2) =", self.__compute_l2_loss(W - old_W))
 
     def free(self):
         self.H = None

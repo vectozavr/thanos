@@ -9,6 +9,8 @@ from .data import get_loaders
 
 from .ablate import AblateGPT
 
+is_compute_l2 = True
+
 def find_layers(module, layers=[nn.Linear], name=''):
     """
     Recursively find the layers of a certain type in a module.
@@ -24,11 +26,26 @@ def find_layers(module, layers=[nn.Linear], name=''):
     if type(module) in layers:
         return {name: module}
     res = {}
+
     for name1, child in module.named_children():
         res.update(find_layers(
             child, layers=layers, name=name + '.' + name1 if name != '' else name1
         ))
     return res
+
+def compute_l2_loss(dW, X):
+    loss = 0
+
+    for Xj in X:
+        dW = dW.float()
+        Xj = Xj.float()
+
+        mult = dW @ Xj
+        l12 = torch.sum(torch.linalg.norm(mult, dim=1))
+        loss += l12
+    loss /= len(X)
+
+    return loss
 
 def check_sparsity(model):
     use_cache = model.config.use_cache
@@ -109,6 +126,8 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
 
         for name in subset:
             W = subset[name].weight.data
+            W_old = W.clone()
+
             W_metric = torch.abs(W)
             if prune_n != 0:
                 W_mask = (torch.zeros_like(W)==1)
@@ -122,6 +141,8 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
 
             W[W_mask] = 0
 
+
+
 def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -131,6 +152,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     print("dataset loading complete")
     with torch.no_grad():
         inps, outs, attention_mask = prepare_calibration_input(model, dataloader, device)
+
+    average_l2_loss = 0
 
     layers = model.model.decoder.layers
     for i in range(len(layers)):
@@ -143,7 +166,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         wrapped_layers = {}
         for name in subset:
-            wrapped_layers[name] = WrappedGPT(subset[name])
+            wrapped_layers[name] = WrappedGPT(subset[name], store_inputs=is_compute_l2)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -177,15 +200,30 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                 indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                 W_mask.scatter_(1, indices, True)
 
+            if hasattr(wrapped_layers[name], 'X'):
+                W_old = subset[name].weight.data.clone()
+
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
+
+            if hasattr(wrapped_layers[name], 'X'):
+                current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()
+                average_l2_loss += current_loss / len(wrapped_layers)
+
+                print("L2 =", current_loss)
 
         for j in range(args.nsamples):
             with torch.no_grad():
                 outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
         inps, outs = outs, inps
 
+    if average_l2_loss != 0:
+        average_l2_loss /= len(layers)
+        print("Average L2 loss =", average_l2_loss)
+
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
+
+    return average_l2_loss
 
 @torch.no_grad()
 def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
@@ -243,7 +281,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         gpts = {}
         for name in subset:
-            gpts[name] = SparseGPT(subset[name], store_inputs=True)
+            gpts[name] = SparseGPT(subset[name], store_inputs=is_compute_l2)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -284,6 +322,8 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
+
+    return average_l2_loss
 
 @torch.no_grad()
 def prune_ablate(args, model, tokenizer, dev, prune_n=0, prune_m=0):
@@ -437,7 +477,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         gpts = {}
         for name in subset:
-            gpts[name] = Thanos(subset[name], store_inputs=True)
+            gpts[name] = Thanos(subset[name], store_inputs=is_compute_l2)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -462,8 +502,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=128,
-                            v_blocksize=512,
+                            blocksize=512,
+                            v_blocksize=128,
                             adaptive_blocksize=False)
 
             #gpts[name].slowprune(args.sparsity_ratio,
@@ -489,3 +529,5 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
+
+    return average_l2_loss

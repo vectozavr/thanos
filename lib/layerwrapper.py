@@ -7,7 +7,7 @@ class WrappedGPT:
     This class wraps a GPT layer for specific operations.
     """
 
-    def __init__(self, layer, layer_id=0, layer_name="none"):
+    def __init__(self, layer, layer_id=0, layer_name="none", store_inputs=False):
         self.layer = layer
         self.dev = self.layer.weight.device
         self.rows = layer.weight.data.shape[0]
@@ -19,6 +19,10 @@ class WrappedGPT:
         self.layer_id = layer_id 
         self.layer_name = layer_name
 
+        self.l2_loss = None
+        if store_inputs:
+            self.X = []
+
     def add_batch(self, inp, out):
         if len(inp.shape) == 2:
             inp = inp.unsqueeze(0)
@@ -27,6 +31,9 @@ class WrappedGPT:
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
             inp = inp.t()
+
+        if hasattr(self, 'X'):
+            self.X.append(inp)
 
         self.scaler_row *= self.nsamples / (self.nsamples+tmp)
         self.nsamples += tmp
