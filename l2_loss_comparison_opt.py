@@ -75,7 +75,9 @@ def main():
     hist_l2_wanda = []
     hist_l2_thanos = []
 
-    for sparsity in torch.arange(0.0, 1.0, 0.1):
+    step = 0.1
+
+    for sparsity in torch.arange(step, 1.0, step):
 
         args.sparsity_ratio = sparsity
 

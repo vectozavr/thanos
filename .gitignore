@@ -7,3 +7,4 @@ lib/__pycache__/
 /venv
 .idea/
 __pycache__/
+*.npy

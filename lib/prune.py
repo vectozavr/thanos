@@ -491,9 +491,12 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         dev = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros(
-        (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
-    )
+    #inps = torch.zeros(
+    #    (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
+    #)
+
+    inps = [None for _ in range(args.nsamples)]
+
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
     class Catcher(nn.Module):
@@ -501,11 +504,13 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             super().__init__()
             self.module = module
         def forward(self, inp, **kwargs):
-            inps[cache['i']] = inp
+            #inps[cache['i']] = inp
+            inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
             cache['position_ids'] = kwargs['position_ids']
             raise ValueError
+
     layers[0] = Catcher(layers[0])
     for batch in dataloader:
         try:
@@ -513,9 +518,9 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         except ValueError:
             pass
     layers[0] = layers[0].module
-    torch.cuda.empty_cache()
+    #torch.cuda.empty_cache()
 
-    outs = torch.zeros_like(inps)
+    #outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
     position_ids = cache['position_ids']
 
@@ -529,7 +534,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             dev = model.hf_device_map[f"model.layers.{i}"]
             print(f"layer {i} device {dev}")
 
-            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            #inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
             if attention_mask:
                 attention_mask = attention_mask.to(dev)
 
@@ -549,7 +554,9 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+            #layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+
         for h in handles:
             h.remove()
 
@@ -573,12 +580,14 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
-            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+            #inps[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+            out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+            inps[j] = out.reshape((-1, out.shape[-1])).to(torch.device("cpu"))
 
         layers[i] = layer
         torch.cuda.empty_cache()
 
-        inps, outs = outs, inps
+        #inps, outs = outs, inps
 
     if average_l2_loss != 0:
         average_l2_loss /= len(layers)

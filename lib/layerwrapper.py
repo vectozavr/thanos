@@ -19,6 +19,8 @@ class WrappedGPT:
         self.layer_id = layer_id 
         self.layer_name = layer_name
 
+        self.X_sum = None
+
         self.l2_loss = None
         if store_inputs:
             self.X = []
@@ -31,6 +33,12 @@ class WrappedGPT:
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
             inp = inp.t()
+
+        if self.X_sum is None:
+            self.X_sum = inp
+        else:
+            self.X_sum *= self.nsamples / (self.nsamples+tmp)
+            self.X_sum += inp / (self.nsamples+tmp)
 
         if hasattr(self, 'X'):
             self.X.append(inp)

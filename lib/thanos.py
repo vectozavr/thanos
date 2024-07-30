@@ -4,9 +4,38 @@ import time
 import torch
 import torch.nn as nn
 import transformers
+import itertools
 
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
+
+
+def generate_masks(m, n):
+    """
+    Generate all variations of masks with m elements in total, and n of them being non-zero.
+
+    Parameters:
+    m (int): Total number of elements in each mask.
+    n (int): Number of non-zero elements in each mask.
+
+    Returns:
+    torch.Tensor: A tensor of size (C, m) where C is the total number of masks and m is the number of elements in each mask.
+    """
+    # Generate all combinations of positions for the non-zero elements
+    indices = list(itertools.combinations(range(m), n))
+
+    # Number of combinations
+    c = len(indices)
+
+    # Initialize the tensor
+    masks = torch.zeros((c, m), dtype=torch.bool)
+
+    # Populate the tensor with masks
+    for i, combination in enumerate(indices):
+        for idx in combination:
+            masks[i, idx] = True
+
+    return masks
 
 
 class Thanos:
@@ -24,6 +53,8 @@ class Thanos:
         self.nsamples = 0
 
         self.scaler_row = torch.zeros((self.columns), device=self.dev)
+
+        self.X_sum = None
 
         self.l2_loss = None
         if store_inputs:
@@ -241,11 +272,36 @@ class Thanos:
 
         return loss
 
+    def __compute_l2_relative_loss(self, W, W_old):
+        if not hasattr(self, 'X'):
+            raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
+
+        dW = W - W_old
+
+        loss = 0
+
+        for Xj in self.X:
+            dW = dW.float()
+            Xj = Xj.float()
+            W_old = W_old.float()
+
+            mult = dW @ Xj
+            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
+
+            mult_abs = W_old @ Xj
+            l12_abs = torch.sum(torch.linalg.norm(mult_abs, dim=1))
+
+            loss += l12/l12_abs
+
+        loss /= len(self.X)
+
+        return loss
+
     def snap(self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01, v_blocksize=64, adaptive_blocksize=False):
         W = self.layer.weight.data.clone()
 
         if hasattr(self, 'X'):
-            old_W = W.clone()
+            W_old = W.clone()
 
         if isinstance(self.layer, nn.Conv2d):
             W = W.flatten(1)
@@ -300,7 +356,8 @@ class Thanos:
         self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
 
         if hasattr(self, 'X'):
-            self.l2_loss = self.__compute_l2_loss(W - old_W)
+            self.l2_loss = self.__compute_l2_loss(W - W_old)
+            #self.l2_loss = self.__compute_l2_relative_loss(W, W_old)
             print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     # This is the first version of Thanos with its naive implementation without vectorization.
@@ -309,7 +366,7 @@ class Thanos:
         W = self.layer.weight.data.clone()
 
         if hasattr(self, 'X'):
-            old_W = W.clone()
+            W_old = W.clone()
 
         if isinstance(self.layer, nn.Conv2d):
             W = W.flatten(1)
@@ -376,7 +433,77 @@ class Thanos:
         self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
 
         if hasattr(self, 'X'):
-            print("Summ(|dW X_j|^2_1,2) =", self.__compute_l2_loss(W - old_W))
+            print("Summ(|dW X_j|^2_1,2) =", self.__compute_l2_loss(W - W_old))
+
+    def slowprune_structured_optimal(self, prune_n=0, prune_m=0, percdamp=.01):
+        W = self.layer.weight.data.clone()
+
+        if hasattr(self, 'X'):
+            W_old = W.clone()
+
+        if isinstance(self.layer, nn.Conv2d):
+            W = W.flatten(1)
+        if isinstance(self.layer, transformers.Conv1D):
+            W = W.t()
+        W = W.float()
+
+        H = self.H
+        del self.H
+        dead = torch.diag(H) == 0
+        H[dead, dead] = 1
+        W[:, dead] = 0
+
+        damp = percdamp * torch.mean(torch.diag(H))
+        diag = torch.arange(self.columns, device=self.dev)
+        H[diag, diag] += damp
+
+        Hinv = torch.linalg.inv(H)
+        H_current = H
+
+        tick = time.time()
+
+        for i1 in range(0, self.columns, prune_m):
+            i2 = min(i1 + prune_m, self.columns)
+
+            for r in range(self.rows):
+
+                masks = generate_masks(prune_m, prune_n)
+
+                best_S = 1e10
+                best_mask_r = masks[0]
+                best_dw = None
+                for current_mask in masks:
+                    indices = torch.nonzero(current_mask).squeeze(dim=1)
+
+                    R = Hinv[:, indices]
+                    R_hat = R[indices]
+                    b = W[r, i1 + indices]
+
+                    lambdas = torch.linalg.solve(R_hat, b)
+
+                    dw = -R @ lambdas
+
+                    current_S = dw.t()@H_current@dw
+                    if current_S < best_S:
+                        best_S = current_S
+                        best_mask_r = current_mask
+                        best_dw = dw
+
+                W[r, i1:] += best_dw
+                W[r, i1 + best_mask_r] = torch.zeros_like(best_mask_r, dtype=W.dtype, device=self.dev)
+
+            H_current = H[i2:, i2:]
+            Hinv = torch.linalg.inv(H_current)
+
+        print('Layer pruning time %.2f' % (time.time() - tick))
+
+        torch.cuda.synchronize()
+        if isinstance(self.layer, transformers.Conv1D):
+            W = W.t()
+        self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
+
+        if hasattr(self, 'X'):
+            print("Summ(|dW X_j|^2_1,2) =", self.__compute_l2_loss(W - W_old))
 
     def free(self):
         self.H = None

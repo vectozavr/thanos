@@ -47,6 +47,29 @@ def compute_l2_loss(dW, X):
 
     return loss
 
+
+def compute_l2_relative_loss(W, W_old, X):
+    dW = W - W_old
+
+    loss = 0
+
+    for Xj in X:
+        dW = dW.float()
+        Xj = Xj.float()
+        W_old = W_old.float()
+
+        mult = dW @ Xj
+        l12 = torch.sum(torch.linalg.norm(mult, dim=1))
+
+        mult_abs = W_old @ Xj
+        l12_abs = torch.sum(torch.linalg.norm(mult_abs, dim=1))
+
+        loss += l12 / l12_abs
+
+    loss /= len(X)
+
+    return loss
+
 def check_sparsity(model):
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -184,7 +207,9 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         for name in subset:
             print(f"pruning layer {i} name {name}")
-            W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
+            #W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1,-1)))
+            scaler_row_sum = torch.norm(wrapped_layers[name].X_sum, p=2, dim=1)**2
+            W_metric = torch.abs(subset[name].weight.data) * torch.sqrt(scaler_row_sum.reshape((1, -1)))
 
             W_mask = (torch.zeros_like(W_metric) == 1)  ## initialize a mask to be all False
             if prune_n != 0:
@@ -206,7 +231,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
 
             if hasattr(wrapped_layers[name], 'X'):
-                current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()
+                #current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()/torch.linalg.norm(W_old).item()
+                current_loss = compute_l2_relative_loss(subset[name].weight.data, W_old, wrapped_layers[name].X).item()
                 average_l2_loss += current_loss / len(wrapped_layers)
 
                 print("L2 =", current_loss)
@@ -435,9 +461,12 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         dev = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros(
-        (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
-    )
+    #inps = torch.zeros(
+    #    (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
+    #)
+
+    inps = [None for _ in range(args.nsamples)]
+
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
     class Catcher(nn.Module):
@@ -445,7 +474,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             super().__init__()
             self.module = module
         def forward(self, inp, **kwargs):
-            inps[cache['i']] = inp
+            inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
             # cache['position_ids'] = kwargs['position_ids']
@@ -459,7 +488,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     layers[0] = layers[0].module
     torch.cuda.empty_cache()
 
-    outs = torch.zeros_like(inps)
+    #outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
 
     print('Ready.')
@@ -471,7 +500,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         if f"model.layers.{i}" in model.hf_device_map:
             dev = model.hf_device_map[f"model.layers.{i}"]
             print(f"layer {i} device {dev}")
-            inps, outs, attention_mask = inps.to(dev), outs.to(dev), attention_mask.to(dev)
+            #inps, outs, attention_mask = inps.to(dev), outs.to(dev), attention_mask.to(dev)
 
         subset = find_layers(layer)
 
@@ -489,7 +518,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
+            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask)[0]
+
         for h in handles:
             h.remove()
 
@@ -502,7 +532,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=512,
+                            blocksize=128,
                             v_blocksize=128,
                             adaptive_blocksize=False)
 
@@ -510,18 +540,24 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             #                     percdamp=0.01,
             #                     blocksize=64)
 
+            #gpts[name].slowprune_structured_optimal(prune_n=prune_n,
+            #                                        prune_m=prune_m,
+            #                                        percdamp=0.01)
+
             if gpts[name].l2_loss is not None:
-                average_l2_loss += gpts[name].l2_loss.item() / len(gpts)
+                current_l2 = gpts[name].l2_loss.item()
+                average_l2_loss += current_l2 / len(gpts)
 
             gpts[name].free()
 
         for j in range(args.nsamples):
-            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
+            out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
+            inps[j] = out.reshape((-1, out.shape[-1])).to(torch.device("cpu"))
 
         layers[i] = layer
         torch.cuda.empty_cache()
 
-        inps, outs = outs, inps
+        #inps, outs = outs, inps
 
     if average_l2_loss != 0:
         average_l2_loss /= len(layers)

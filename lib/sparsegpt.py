@@ -62,13 +62,38 @@ class SparseGPT:
 
         return loss
 
+    def __compute_l2_relative_loss(self, W, W_old):
+        if not hasattr(self, 'X'):
+            raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
+
+        dW = W - W_old
+
+        loss = 0
+
+        for Xj in self.X:
+            dW = dW.float()
+            Xj = Xj.float()
+            W_old = W_old.float()
+
+            mult = dW @ Xj
+            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
+
+            mult_abs = W_old @ Xj
+            l12_abs = torch.sum(torch.linalg.norm(mult_abs, dim=1))
+
+            loss += l12 / l12_abs
+
+        loss /= len(self.X)
+
+        return loss
+
     def fasterprune(
         self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01
     ):
         W = self.layer.weight.data.clone()
 
         if hasattr(self, 'X'):
-            old_W = W.clone()
+            W_old = W.clone()
 
         if isinstance(self.layer, nn.Conv2d):
             W = W.flatten(1)
@@ -146,7 +171,8 @@ class SparseGPT:
 
 
         if hasattr(self, 'X'):
-            self.l2_loss = self.__compute_l2_loss(W - old_W)
+            #self.l2_loss = self.__compute_l2_loss(W - old_W)/torch.linalg.norm(old_W).item()
+            self.l2_loss = self.__compute_l2_relative_loss(W, W_old)
             print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     def free(self):
