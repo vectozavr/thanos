@@ -85,7 +85,8 @@ def check_sparsity(model):
     model.config.use_cache = use_cache
     return float(count)/total_params
 
-def prepare_calibration_input(model, dataloader, device):
+
+def prepare_calibration_input(model, dataloader, device, nsamples):
     use_cache = model.config.use_cache
     model.config.use_cache = False
     layers = model.model.layers
@@ -94,8 +95,11 @@ def prepare_calibration_input(model, dataloader, device):
         device = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros((128, model.seqlen, model.config.hidden_size), dtype=dtype, device=device)
-    inps.requires_grad = False
+    #inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=device)
+
+    inps = [None for _ in range(nsamples)]
+
+    #inps.requires_grad = False
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
     class Catcher(nn.Module):
@@ -103,7 +107,8 @@ def prepare_calibration_input(model, dataloader, device):
             super().__init__()
             self.module = module
         def forward(self, inp, **kwargs):
-            inps[cache['i']] = inp
+            #inps[cache['i']] = inp
+            inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
             cache['position_ids'] = kwargs['position_ids']
@@ -116,12 +121,13 @@ def prepare_calibration_input(model, dataloader, device):
             pass
     layers[0] = layers[0].module
 
-    outs = torch.zeros_like(inps)
+    #outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
     position_ids = cache['position_ids']
     model.config.use_cache = use_cache
 
-    return inps, outs, attention_mask, position_ids
+    return inps, attention_mask, position_ids
+
 
 def return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before):
     thres_cumsum = sum_before * alpha
@@ -130,6 +136,7 @@ def return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before):
     W_mask = (W_metric <= thres)
     cur_sparsity = (W_mask==True).sum() / W_mask.numel()
     return W_mask, cur_sparsity
+
 
 def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
     layers = model.model.layers
@@ -162,7 +169,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
     print("dataset loading complete")
     with torch.no_grad():
-        inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device)
+        #inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, args.nsamples)
+        inps, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, args.nsamples)
 
     layers = model.model.layers
     for i in range(len(layers)):
@@ -172,7 +180,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
         if f"model.layers.{i}" in model.hf_device_map:   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
             dev = model.hf_device_map[f"model.layers.{i}"]
 
-            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            #inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
             if attention_mask:
                 attention_mask = attention_mask.to(dev)
 
@@ -190,7 +198,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
             handles.append(subset[name].register_forward_hook(add_batch(name)))
         for j in range(args.nsamples):
             with torch.no_grad():
-                outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                #outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
         for h in handles:
             h.remove()
 
@@ -236,8 +245,10 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         for j in range(args.nsamples):
             with torch.no_grad():
-                outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-        inps, outs = outs, inps
+                #outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                inps[j] = out.reshape((-1, out.shape[-1])).to(torch.device("cpu"))
+        #inps, outs = outs, inps
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
@@ -518,7 +529,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         except ValueError:
             pass
     layers[0] = layers[0].module
-    #torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 
     #outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']

@@ -8,6 +8,17 @@ import transformers
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
+
+def l12_loss(dW, X):
+    dW = dW.float()
+    X = X.float()
+
+    mult = dW @ X
+    l12 = torch.sum(torch.linalg.norm(mult, dim=1)**2)
+
+    return l12
+
+
 ## SparseGPT: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
 class SparseGPT:
 
@@ -52,12 +63,7 @@ class SparseGPT:
         loss = 0
 
         for Xj in self.X:
-            dW = dW.float()
-            Xj = Xj.float()
-
-            mult = dW @ Xj
-            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
-            loss += l12
+            loss += l12_loss(dW, Xj)
         loss /= len(self.X)
 
         return loss
@@ -71,15 +77,8 @@ class SparseGPT:
         loss = 0
 
         for Xj in self.X:
-            dW = dW.float()
-            Xj = Xj.float()
-            W_old = W_old.float()
-
-            mult = dW @ Xj
-            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
-
-            mult_abs = W_old @ Xj
-            l12_abs = torch.sum(torch.linalg.norm(mult_abs, dim=1))
+            l12 = l12_loss(dW, Xj)
+            l12_abs = l12_loss(W_old, Xj)
 
             loss += l12 / l12_abs
 
@@ -171,8 +170,8 @@ class SparseGPT:
 
 
         if hasattr(self, 'X'):
-            #self.l2_loss = self.__compute_l2_loss(W - old_W)/torch.linalg.norm(old_W).item()
-            self.l2_loss = self.__compute_l2_relative_loss(W, W_old)
+            self.l2_loss = self.__compute_l2_loss(W - W_old)
+            #self.l2_loss = self.__compute_l2_relative_loss(W, W_old)
             print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     def free(self):

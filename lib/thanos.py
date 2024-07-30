@@ -38,6 +38,16 @@ def generate_masks(m, n):
     return masks
 
 
+def l12_loss(dW, X):
+    dW = dW.float()
+    X = X.float()
+
+    mult = dW @ X
+    l12 = torch.sum(torch.linalg.norm(mult, dim=1)**2)
+
+    return l12
+
+
 class Thanos:
     def __init__(self, layer, store_inputs=False):
         self.layer = layer
@@ -47,6 +57,7 @@ class Thanos:
             W = W.flatten(1)
         if isinstance(self.layer, transformers.Conv1D):
             W = W.t()
+
         self.rows = W.shape[0]
         self.columns = W.shape[1]
         self.H = torch.zeros((self.columns, self.columns), device=self.dev)
@@ -54,11 +65,17 @@ class Thanos:
 
         self.scaler_row = torch.zeros((self.columns), device=self.dev)
 
-        self.X_sum = None
-
         self.l2_loss = None
         if store_inputs:
             self.X = []
+
+    def free_batch(self):
+        if hasattr(self, 'X'):
+            self.X = []
+
+        self.H = torch.zeros((self.columns, self.columns), device=self.dev)
+        self.scaler_row = torch.zeros((self.columns), device=self.dev)
+        self.nsamples = 0
 
     def add_batch(self, inp, out):
         if len(inp.shape) == 2:
@@ -75,11 +92,17 @@ class Thanos:
         self.H *= self.nsamples / (self.nsamples + tmp)
         self.scaler_row *= self.nsamples / (self.nsamples + tmp)
 
+        W = self.layer.weight.data
+        #l12 = l12_loss(W, inp)
+
         self.nsamples += tmp
         self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2 / self.nsamples
 
         inp = math.sqrt(2 / self.nsamples) * inp.float()
+        # Simple sum
         self.H += inp.matmul(inp.t())
+        # Weighted sum
+        #self.H += inp.matmul(inp.t())/l12
 
     def __unstructured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize):
         W1 = W[:, i1:i2]
@@ -91,7 +114,7 @@ class Thanos:
 
         if use_global_mask:
             # Global Wanda metric
-            glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:].reshape((1, -1)))
+            glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:]).reshape((1, -1))
 
             estimate_zeros = int(sparsity*self.rows*self.columns - zeros)
 
@@ -262,12 +285,7 @@ class Thanos:
         loss = 0
 
         for Xj in self.X:
-            dW = dW.float()
-            Xj = Xj.float()
-
-            mult = dW @ Xj
-            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
-            loss += l12
+            loss += l12_loss(dW, Xj)
         loss /= len(self.X)
 
         return loss
@@ -281,15 +299,8 @@ class Thanos:
         loss = 0
 
         for Xj in self.X:
-            dW = dW.float()
-            Xj = Xj.float()
-            W_old = W_old.float()
-
-            mult = dW @ Xj
-            l12 = torch.sum(torch.linalg.norm(mult, dim=1))
-
-            mult_abs = W_old @ Xj
-            l12_abs = torch.sum(torch.linalg.norm(mult_abs, dim=1))
+            l12 = l12_loss(dW, Xj)
+            l12_abs = l12_loss(W_old, Xj)
 
             loss += l12/l12_abs
 

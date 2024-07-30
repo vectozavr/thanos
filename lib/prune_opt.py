@@ -33,16 +33,22 @@ def find_layers(module, layers=[nn.Linear], name=''):
         ))
     return res
 
+
+def l12_loss(dW, X):
+    dW = dW.float()
+    X = X.float()
+
+    mult = dW @ X
+    l12 = torch.sum(torch.linalg.norm(mult, dim=1)**2)
+
+    return l12
+
+
 def compute_l2_loss(dW, X):
     loss = 0
 
     for Xj in X:
-        dW = dW.float()
-        Xj = Xj.float()
-
-        mult = dW @ Xj
-        l12 = torch.sum(torch.linalg.norm(mult, dim=1))
-        loss += l12
+        loss += l12_loss(dW, Xj)
     loss /= len(X)
 
     return loss
@@ -54,21 +60,15 @@ def compute_l2_relative_loss(W, W_old, X):
     loss = 0
 
     for Xj in X:
-        dW = dW.float()
-        Xj = Xj.float()
-        W_old = W_old.float()
-
-        mult = dW @ Xj
-        l12 = torch.sum(torch.linalg.norm(mult, dim=1))
-
-        mult_abs = W_old @ Xj
-        l12_abs = torch.sum(torch.linalg.norm(mult_abs, dim=1))
+        l12 = l12_loss(dW, Xj)
+        l12_abs = l12_loss(W_old, Xj)
 
         loss += l12 / l12_abs
 
     loss /= len(X)
 
     return loss
+
 
 def check_sparsity(model):
     use_cache = model.config.use_cache
@@ -231,8 +231,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
 
             if hasattr(wrapped_layers[name], 'X'):
-                #current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()/torch.linalg.norm(W_old).item()
-                current_loss = compute_l2_relative_loss(subset[name].weight.data, W_old, wrapped_layers[name].X).item()
+                current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()
+                #current_loss = compute_l2_relative_loss(subset[name].weight.data, W_old, wrapped_layers[name].X).item()
                 average_l2_loss += current_loss / len(wrapped_layers)
 
                 print("L2 =", current_loss)
@@ -495,6 +495,24 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     average_l2_loss = 0
 
+    def recalculate(layer, inps, gpts, subset):
+
+        def _add_batch(name):
+            def tmp(_, inp, out):
+                gpts[name].add_batch(inp[0].data, out.data)
+            return tmp
+
+        _handles = []
+        for name in gpts:
+            gpts[name].free_batch()
+            _handles.append(subset[name].register_forward_hook(_add_batch(name)))
+
+        for j in range(args.nsamples):
+            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask)[0]
+
+        for h in _handles:
+            h.remove()
+
     for i in range(len(layers)):
         layer = layers[i]
         if f"model.layers.{i}" in model.hf_device_map:
@@ -535,6 +553,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             blocksize=128,
                             v_blocksize=128,
                             adaptive_blocksize=False)
+
+            #recalculate(layer, inps, gpts, subset)
 
             #gpts[name].slowprune(args.sparsity_ratio,
             #                     percdamp=0.01,
