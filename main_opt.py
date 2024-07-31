@@ -41,16 +41,16 @@ def main():
     # facebook/opt-125m
     # facebook/opt-350m
     # facebook/opt-1.3b
+
     # facebook/opt-2.7b
     # facebook/opt-6.7b
     # facebook/opt-13b
-
     # facebook/opt-30b
     # facebook/opt-66b
     # facebook/opt-175b
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-1.3b")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')

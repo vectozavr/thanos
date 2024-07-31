@@ -69,13 +69,6 @@ class Thanos:
         if store_inputs:
             self.X = []
 
-    def free_batch(self):
-        if hasattr(self, 'X'):
-            self.X = []
-
-        self.H = torch.zeros((self.columns, self.columns), device=self.dev)
-        self.scaler_row = torch.zeros((self.columns), device=self.dev)
-        self.nsamples = 0
 
     def add_batch(self, inp, out):
         if len(inp.shape) == 2:
@@ -92,17 +85,21 @@ class Thanos:
         self.H *= self.nsamples / (self.nsamples + tmp)
         self.scaler_row *= self.nsamples / (self.nsamples + tmp)
 
-        W = self.layer.weight.data
-        #l12 = l12_loss(W, inp)
-
         self.nsamples += tmp
+
+        # Simple sum
         self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2 / self.nsamples
+        # Weighted sum
+        #W = self.layer.weight.data
+        #l12 = l12_loss(W, inp).item()
+        #self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2 / (1e-5*l12*self.nsamples)
 
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         # Simple sum
         self.H += inp.matmul(inp.t())
         # Weighted sum
         #self.H += inp.matmul(inp.t())/l12
+
 
     def __unstructured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize):
         W1 = W[:, i1:i2]

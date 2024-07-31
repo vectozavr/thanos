@@ -566,7 +566,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         for j in range(args.nsamples):
             #layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
 
         for h in handles:
             h.remove()
@@ -580,8 +580,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_m=prune_m,
                             percdamp=0.01,
                             blocksize=512,
-                            v_blocksize=128,
-                            adaptive_blocksize=False)
+                            v_blocksize=256,
+                            adaptive_blocksize=True)
 
             if gpts[name].l2_loss is not None:
                 average_l2_loss += gpts[name].l2_loss / len(gpts)

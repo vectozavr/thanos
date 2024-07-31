@@ -448,6 +448,19 @@ def prune_ablate(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
 
+
+def prepare_bathed_dataset(dataloader):
+    inps = []
+    for i in range(len(dataloader)//32):
+        _from = i*32
+        _to = min(len(dataloader), (i + 1) * 32)
+        batch_samples = [sample[0].flatten() for sample in dataloader[_from:_to]]
+        batch = torch.stack(batch_samples)
+        inps.append(batch)
+
+    return inps
+
+
 @torch.no_grad()
 def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     print('Starting ...')
@@ -536,7 +549,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask)[0]
+            layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask)
 
         for h in handles:
             h.remove()
@@ -550,8 +563,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=128,
-                            v_blocksize=128,
+                            blocksize=256,
+                            v_blocksize=256,
                             adaptive_blocksize=False)
 
             #recalculate(layer, inps, gpts, subset)
