@@ -546,7 +546,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             print(f"layer {i} device {dev}")
 
             #inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
-            if attention_mask:
+            if attention_mask is not None:
                 attention_mask = attention_mask.to(dev)
 
         subset = find_layers(layer)

@@ -75,7 +75,11 @@ def main():
     hist_l2_wanda = []
     hist_l2_thanos = []
 
-    step = 0.1
+    hist_ppl_sparsegpt = []
+    hist_ppl_wanda = []
+    hist_ppl_thanos = []
+
+    step = 0.01
 
     for sparsity in torch.arange(step, 1.0, step):
 
@@ -85,30 +89,38 @@ def main():
         model = get_llm(args.model, args.cache_dir)
         model.eval()
         l2_sparsegpt = prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        ppl_sparsegpt = eval_ppl(args, model, tokenizer, device)
 
         # Wanda part
         model = get_llm(args.model, args.cache_dir)
         model.eval()
         l2_wanda = prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        ppl_wanda = eval_ppl(args, model, tokenizer, device)
 
         # Thanos part
         model = get_llm(args.model, args.cache_dir)
         model.eval()
         l2_thanos = prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        ppl_thanos = eval_ppl(args, model, tokenizer, device)
 
-        print("sparsity:", sparsity, " -> [", l2_sparsegpt, l2_wanda, l2_thanos, "]")
+        print("sparsity:", sparsity, " -> l2 = [", l2_sparsegpt, l2_wanda, l2_thanos, "]")
+        print("sparsity:", sparsity, " -> ppl = [", ppl_sparsegpt, ppl_wanda, ppl_thanos, "]")
 
         hist_l2_sparsegpt.append([sparsity, l2_sparsegpt])
         hist_l2_wanda.append([sparsity, l2_wanda])
         hist_l2_thanos.append([sparsity, l2_thanos])
 
-        # TODO: add perplexity evaluation for each method
-        #ppl_test = eval_ppl(args, model, tokenizer, device)
-        #print(f"wikitext perplexity {ppl_test}")
+        hist_ppl_sparsegpt.append([sparsity, ppl_sparsegpt])
+        hist_ppl_wanda.append([sparsity, ppl_wanda])
+        hist_ppl_thanos.append([sparsity, ppl_thanos])
 
     np.save('hist_l2_sparsegpt.npy', np.array(hist_l2_sparsegpt))
     np.save('hist_l2_wanda.npy', np.array(hist_l2_wanda))
     np.save('hist_l2_thanos.npy', np.array(hist_l2_thanos))
+
+    np.save('hist_ppl_sparsegpt.npy', np.array(hist_ppl_sparsegpt))
+    np.save('hist_ppl_wanda.npy', np.array(hist_ppl_wanda))
+    np.save('hist_ppl_thanos.npy', np.array(hist_ppl_thanos))
 
 
 if __name__ == '__main__':
