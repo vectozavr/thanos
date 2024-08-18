@@ -50,7 +50,7 @@ def main():
     # facebook/opt-175b
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-1.3b")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')

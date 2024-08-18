@@ -166,7 +166,7 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
 
 
 
-def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0, is_store_all_loses = False):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
@@ -180,6 +180,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
     layers = model.model.decoder.layers
     for i in range(len(layers)):
+        l2_losses = []
+
         layer = layers[i]
         subset = find_layers(layer)
 
@@ -231,11 +233,20 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
 
             if hasattr(wrapped_layers[name], 'X'):
-                current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()
-                #current_loss = compute_l2_relative_loss(subset[name].weight.data, W_old, wrapped_layers[name].X).item()
-                average_l2_loss += current_loss / len(wrapped_layers)
+                if is_store_all_loses:
+                    l2_losses.append(compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item())
+                else:
+                    current_loss = compute_l2_loss(subset[name].weight.data - W_old, wrapped_layers[name].X).item()
+                    #current_loss = compute_l2_relative_loss(subset[name].weight.data, W_old, wrapped_layers[name].X).item()
+                    average_l2_loss += current_loss / len(wrapped_layers)
 
-                print("L2 =", current_loss)
+                    print("L2 =", current_loss)
+
+        if is_store_all_loses:
+            model.config.use_cache = use_cache
+            torch.cuda.empty_cache()
+
+            return l2_losses
 
         for j in range(args.nsamples):
             with torch.no_grad():
@@ -252,7 +263,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     return average_l2_loss
 
 @torch.no_grad()
-def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
+def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all_loses = False):
     ## SparseGPT code available at: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
     print('Starting ...')
     dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
@@ -297,6 +308,8 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     average_l2_loss = 0
 
     for i in range(len(layers)):
+        l2_losses = []
+
         layer = layers[i]
         if f"model.layers.{i}" in model.hf_device_map:
             dev = model.hf_device_map[f"model.layers.{i}"]
@@ -330,9 +343,17 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             gpts[name].fasterprune(args.sparsity_ratio, prune_n=prune_n, prune_m=prune_m, percdamp=0.01, blocksize=128)
 
             if gpts[name].l2_loss is not None:
-                average_l2_loss += gpts[name].l2_loss.item() / len(gpts)
+                if is_store_all_loses:
+                    l2_losses.append(gpts[name].l2_loss.item())
+                else:
+                    average_l2_loss += gpts[name].l2_loss.item() / len(gpts)
 
             gpts[name].free()
+
+        if is_store_all_loses:
+            model.config.use_cache = use_cache
+            torch.cuda.empty_cache()
+            return l2_losses
 
         for j in range(args.nsamples):
             outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
@@ -462,7 +483,7 @@ def prepare_bathed_dataset(dataloader):
 
 
 @torch.no_grad()
-def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
+def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all_loses = False):
     print('Starting ...')
     dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
 
@@ -527,6 +548,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             h.remove()
 
     for i in range(len(layers)):
+        l2_losses = []
+
         layer = layers[i]
         if f"model.layers.{i}" in model.hf_device_map:
             dev = model.hf_device_map[f"model.layers.{i}"]
@@ -558,12 +581,16 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             print(i, name)
             print('Pruning ...')
 
+            if name == "self_attn.k_proj" or name == "self_attn.q_proj":
+                current_sparsity = 0.3
+            else:
+                current_sparsity = 0.5
 
-            gpts[name].snap(args.sparsity_ratio,
+            gpts[name].snap(current_sparsity,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=128,
+                            blocksize=256,
                             v_blocksize=256,
                             adaptive_blocksize=False)
 
@@ -581,7 +608,19 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                 current_l2 = gpts[name].l2_loss.item()
                 average_l2_loss += current_l2 / len(gpts)
 
+            if gpts[name].l2_loss is not None:
+                if is_store_all_loses:
+                    l2_losses.append(gpts[name].l2_loss.item())
+                else:
+                    current_l2 = gpts[name].l2_loss.item()
+                    average_l2_loss += current_l2 / len(gpts)
+
             gpts[name].free()
+
+        if is_store_all_loses:
+            model.config.use_cache = use_cache
+            torch.cuda.empty_cache()
+            return l2_losses
 
         for j in range(args.nsamples):
             out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]

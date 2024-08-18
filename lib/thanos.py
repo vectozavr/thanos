@@ -320,6 +320,8 @@ class Thanos:
         if adaptive_blocksize:
             blocksize = self.columns // 8
 
+        #blocksize = self.columns
+
         H = self.H
         del self.H
         dead = torch.diag(H) == 0
