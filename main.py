@@ -63,7 +63,7 @@ def main():
     # Phi-3-mini-4k-instruct (3.8b)
     # microsoft/Phi-3-mini-4k-instruct
 
-    parser.add_argument('--model', type=str, help='LLaMA model', default="mistralai/Mistral-7B-v0.1")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-7b-hf")
     #parser.add_argument('--model', type=str, help='LLaMA model', default="llm_weights/pruned_llama2_7b/unstructured/thanos_blocksize_128_dynamic_mask")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
@@ -74,7 +74,7 @@ def main():
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
-    parser.add_argument('--save_model', type=str, default="llm_weights/unstructured/mistral-7B-v0.1/thanos", help='Path to save the pruned model.')
+    parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
     #parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
 
     args = parser.parse_args()

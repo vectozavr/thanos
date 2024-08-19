@@ -9,6 +9,30 @@ from .data import get_loaders
 
 from .ablate import AblateGPT
 
+import numpy as np
+from PIL import Image
+import sys
+def save_mask_as_rgb_image(mask, filename):
+    """
+    Save a square mask tensor as an RGB image.
+
+    Parameters:
+    mask (torch.Tensor): A boolean tensor of shape (n, n) where True is black and False is white.
+    filename (str): The name of the file to save the image as.
+    """
+    # Convert the mask to a numpy array with values 0 (black) and 255 (white)
+    grayscale_image = np.where(mask.cpu().numpy(), 0, 255).astype(np.uint8)
+
+    # Convert the grayscale image to an RGB image by stacking the channels
+    rgb_image = np.stack([grayscale_image] * 3, axis=-1)
+
+    # Convert to a PIL image
+    pil_image = Image.fromarray(rgb_image)
+
+    # Save the image
+    pil_image.save(filename)
+
+
 def find_layers(module, layers=[nn.Linear], name=''):
     """
     Recursively find the layers of a certain type in a module.
@@ -241,7 +265,11 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                     indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                     W_mask.scatter_(1, indices, True)
 
+            save_mask_as_rgb_image(W_mask, "data/llama2_mask_image_" + name + ".png")
+
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
+
+        sys.exit()
 
         for j in range(args.nsamples):
             with torch.no_grad():
@@ -553,7 +581,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         gpts = {}
         for name in subset:
-            gpts[name] = Thanos(subset[name])
+            gpts[name] = Thanos(subset[name], store_inputs=False)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -579,8 +607,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=512,
-                            v_blocksize=256,
+                            blocksize=256,
+                            v_blocksize=64,
                             adaptive_blocksize=True)
 
             if gpts[name].l2_loss is not None:

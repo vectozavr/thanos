@@ -11,6 +11,30 @@ from .ablate import AblateGPT
 
 is_compute_l2 = True
 
+import numpy as np
+from PIL import Image
+import sys
+def save_mask_as_rgb_image(mask, filename):
+    """
+    Save a square mask tensor as an RGB image.
+
+    Parameters:
+    mask (torch.Tensor): A boolean tensor of shape (n, n) where True is black and False is white.
+    filename (str): The name of the file to save the image as.
+    """
+    # Convert the mask to a numpy array with values 0 (black) and 255 (white)
+    grayscale_image = np.where(mask.cpu().numpy(), 0, 255).astype(np.uint8)
+
+    # Convert the grayscale image to an RGB image by stacking the channels
+    rgb_image = np.stack([grayscale_image] * 3, axis=-1)
+
+    # Convert to a PIL image
+    pil_image = Image.fromarray(rgb_image)
+
+    # Save the image
+    pil_image.save(filename)
+
+
 def find_layers(module, layers=[nn.Linear], name=''):
     """
     Recursively find the layers of a certain type in a module.
@@ -227,6 +251,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                 indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                 W_mask.scatter_(1, indices, True)
 
+            save_mask_as_rgb_image(W_mask, "data/mask_image_"+name+".png")
+
             if hasattr(wrapped_layers[name], 'X'):
                 W_old = subset[name].weight.data.clone()
 
@@ -241,6 +267,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                     average_l2_loss += current_loss / len(wrapped_layers)
 
                     print("L2 =", current_loss)
+
+        sys.exit()
 
         if is_store_all_loses:
             model.config.use_cache = use_cache
@@ -586,7 +614,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all
             else:
                 current_sparsity = 0.5
 
-            gpts[name].snap(current_sparsity,
+            gpts[name].snap(args.sparsity_ratio,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
