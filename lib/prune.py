@@ -12,6 +12,8 @@ from .ablate import AblateGPT
 import numpy as np
 from PIL import Image
 import sys
+
+
 def save_mask_as_rgb_image(mask, filename):
     """
     Save a square mask tensor as an RGB image.
@@ -602,14 +604,19 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         for name in gpts:
             print(i, name)
             print('Pruning ...')
+            
+            #if "gate_proj" in name or "up_proj" in name:
+            #    current_sparsity = 0
+            #else:
+            #    current_sparsity = 0.5
 
             gpts[name].snap(args.sparsity_ratio,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
                             blocksize=256,
-                            v_blocksize=64,
-                            adaptive_blocksize=True)
+                            v_blocksize=512,
+                            adaptive_blocksize=False)
 
             if gpts[name].l2_loss is not None:
                 average_l2_loss += gpts[name].l2_loss / len(gpts)

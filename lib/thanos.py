@@ -542,7 +542,7 @@ class Thanos:
 
 
         # Unstructured pruning with random bathes
-        
+        '''
         bath_of_blocks = reshuffle_tensor(torch.arange(0, self.columns//blocksize))
         
         for b in range(bath_of_blocks.shape[0]):
@@ -555,22 +555,22 @@ class Thanos:
 
             curent_slice = active_weights_mask(bath_of_blocks[:b+1], blocksize, self.columns)
             Hinv = torch.linalg.inv(H[curent_slice][:, curent_slice])
-
-
         '''
+
+
         # Subsequent pruning
         for i1 in range(0, self.columns, blocksize):
             i2 = min(i1 + blocksize, self.columns)
 
             if prune_n == 0:  # unstructured
-                #zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
-                zeros += self.__unstructured_same_for_all_rows(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
+                zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
+                #zeros += self.__unstructured_same_for_all_rows(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
                 #self.__semistructured(W, Hinv, i1, i2, sparsity, v_blocksize)
             else:  # structured n:m sparsity
                 self.__structured(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
 
             Hinv = torch.linalg.inv(H[i2:, i2:])
-        '''
+
 
         print('Layer pruning time %.2f' % (time.time() - tick))
 

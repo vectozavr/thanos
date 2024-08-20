@@ -10,6 +10,8 @@ from importlib.metadata import version
 from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, prune_ablate, check_sparsity
 from lib.eval import eval_ppl
 
+from lib.printtg import print_tg
+
 # In case you want to select particular GPUs
 #os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
