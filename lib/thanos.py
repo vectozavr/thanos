@@ -726,9 +726,9 @@ class Thanos:
         return loss
 
     def snap(self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01, v_blocksize=64, adaptive_blocksize=False):
-        if blocksize == 1:
-            # return self.snap_bs_one_magnitude_based(sparsity, prune_n, prune_m, percdamp)
-            return self.snap_bs_one(sparsity, prune_n, prune_m, percdamp)
+        #if blocksize == 1:
+        #    # return self.snap_bs_one_magnitude_based(sparsity, prune_n, prune_m, percdamp)
+        #    return self.snap_bs_one(sparsity, prune_n, prune_m, percdamp)
 
         W = self.layer.weight.data.clone()
 
@@ -763,22 +763,22 @@ class Thanos:
         zeros = 0
 
         # TODO: move this flag from here to args
-        use_constant_mask = False
+        use_constant_mask = True
         
         const_mask = None
         if use_constant_mask:
             # Global mask on Wanda metric
-            #glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
-            #values, indices = torch.topk(glob_tmp.flatten(), int(W.numel()*sparsity), largest=False)
-            #const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
-            #const_mask.view(-1)[indices] = True
+            glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
+            values, indices = torch.topk(glob_tmp.flatten(), int(W.numel()*sparsity), largest=False)
+            const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
+            const_mask.view(-1)[indices] = True
 
             # Global Wanda mask
-            glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
-            sort_res = torch.sort(glob_tmp, dim=-1, stable=True)
-            indices = sort_res[1][:, :int(glob_tmp.shape[1] * sparsity)]
-            const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
-            const_mask.scatter_(1, indices, True)
+            #glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
+            #sort_res = torch.sort(glob_tmp, dim=-1, stable=True)
+            #indices = sort_res[1][:, :int(glob_tmp.shape[1] * sparsity)]
+            #const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
+            #const_mask.scatter_(1, indices, True)
 
 
         '''
