@@ -11,7 +11,7 @@ from lib.prune_opt import prune_wanda, prune_magnitude, prune_sparsegpt, prune_t
 from lib.eval import eval_ppl
 
 # In case you want to select particular GPUs
-#os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
 
 print("CUDA Available:", torch.cuda.is_available())
 for i in range(torch.cuda.device_count()):

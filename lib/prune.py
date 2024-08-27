@@ -523,7 +523,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                                 seed=args.seed,
                                 seqlen=model.seqlen,
                                 tokenizer=tokenizer)
-
+    print("Loaded dataset...")
     use_cache = model.config.use_cache
     model.config.use_cache = False
     layers = model.model.layers
@@ -604,7 +604,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         for name in gpts:
             print(i, name)
             print('Pruning ...')
-            
+
             #if "gate_proj" in name or "up_proj" in name:
             #    current_sparsity = 0
             #else:
@@ -614,8 +614,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=256,
-                            v_blocksize=512,
+                            blocksize=1,
+                            v_blocksize=128,
                             adaptive_blocksize=False)
 
             if gpts[name].l2_loss is not None:

@@ -13,7 +13,10 @@ from lib.eval import eval_ppl
 from lib.printtg import print_tg
 
 # In case you want to select particular GPUs
-#os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
+
+import warnings
+warnings.filterwarnings("ignore")
 
 print("CUDA Available:", torch.cuda.is_available())
 for i in range(torch.cuda.device_count()):

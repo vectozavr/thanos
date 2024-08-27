@@ -511,9 +511,9 @@ def prepare_bathed_dataset(dataloader):
 
 
 @torch.no_grad()
-def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all_loses = False):
+def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all_loses=False):
     print('Starting ...')
-    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    dataloader, _ = get_loaders("c4", nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -575,6 +575,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all
         for h in _handles:
             h.remove()
 
+    l2_mean_losses = {}
+
     for i in range(len(layers)):
         l2_losses = []
 
@@ -614,27 +616,26 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all
             else:
                 current_sparsity = 0.5
 
+            #if "fc2" in name and i==3:
+            #    a = 0
+
             gpts[name].snap(args.sparsity_ratio,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=256,
-                            v_blocksize=256,
+                            blocksize=512,
+                            v_blocksize=512,
                             adaptive_blocksize=False)
 
             #recalculate(layer, inps, gpts, subset)
 
             #gpts[name].slowprune(args.sparsity_ratio,
             #                     percdamp=0.01,
-            #                     blocksize=64)
+            #                     blocksize=128)
 
             #gpts[name].slowprune_structured_optimal(prune_n=prune_n,
             #                                        prune_m=prune_m,
             #                                        percdamp=0.01)
-
-            if gpts[name].l2_loss is not None:
-                current_l2 = gpts[name].l2_loss.item()
-                average_l2_loss += current_l2 / len(gpts)
 
             if gpts[name].l2_loss is not None:
                 if is_store_all_loses:
@@ -642,6 +643,11 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all
                 else:
                     current_l2 = gpts[name].l2_loss.item()
                     average_l2_loss += current_l2 / len(gpts)
+
+
+                    if name not in l2_mean_losses:
+                        l2_mean_losses[name] = 0.0
+                    l2_mean_losses[name] += current_l2/len(layers)
 
             gpts[name].free()
 
@@ -662,6 +668,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, is_store_all
     if average_l2_loss != 0:
         average_l2_loss /= len(layers)
         print("Average L2 loss =", average_l2_loss)
+
+    print("Average L2 for layers:\n", l2_mean_losses)
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
