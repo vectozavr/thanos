@@ -1,6 +1,7 @@
 import math
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import transformers
@@ -17,6 +18,25 @@ def l12_loss(dW, X):
     l12 = torch.sum(torch.linalg.norm(mult, dim=1)**2)
 
     return l12
+
+
+def plot_heatmap(tensor, title):
+    import matplotlib.pyplot as plt
+
+    vmin, vmax = np.percentile(tensor.cpu().numpy(), [2, 98])
+
+    m, n = tensor.shape
+    plt.figure(figsize=((n + 500) / 100, (m + 500) / 100), dpi=100)
+    plt.imshow(tensor.cpu().numpy(), cmap='viridis', vmin=vmin, vmax=vmax, extent=[0, n, 0, m])
+    plt.colorbar(label=r'$H^{-1}_{ij}$')
+    plt.title(title)
+    plt.xlabel('j')
+    plt.ylabel('i')
+
+    #plt.tight_layout(pad=1.0)
+
+    plt.savefig(title + ".png", format='png', dpi=100)
+    plt.close()
 
 
 ## SparseGPT: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa

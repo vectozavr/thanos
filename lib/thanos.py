@@ -45,14 +45,20 @@ def generate_masks(m, n):
     return masks
 
 
-def l12_loss(dW, X):
+def l12_loss(dW, Xj):
     dW = dW.float()
-    X = X.float()
+    Xj = Xj.float()
 
-    mult = dW @ X
-    l12 = torch.sum(torch.linalg.norm(mult, dim=1)**2)
+    mult = dW @ Xj
 
-    return l12
+    return torch.sum(mult ** 2)
+
+
+def compute_l2_loss(dW, X):
+    loss = 0
+    for Xj in X:
+        loss += l12_loss(dW, Xj) / len(X)
+    return loss
 
 
 def active_weights_mask_bathed(batches_to_remove, blocksize, mask_size):
@@ -95,6 +101,124 @@ def find_index_of_a_column(W, W_column):
     total_differences = differences.sum(dim=0)
     j = torch.argmin(total_differences)
     return j
+
+
+def gd_sparse_mask(W, X, M0=None, sparsity_ratio=0.5, lr=0.01, num_iters=100, sparsity_lambda=0.1, l1_lambda=0.1):
+    """
+    Generate a sparse mask M via minimizing the loss using Adam optimizer, with reconstruction loss,
+    sparsity loss, L1 regularization, and final thresholding to enforce exact sparsity.
+
+    Args:
+    - W (torch.Tensor): The weight matrix of size (m, n).
+    - X (torch.Tensor): The input matrix of size (n, l).
+    - sparsity_ratio (float): The desired sparsity ratio (e.g., 0.5 for 50% sparsity).
+    - lr (float): Learning rate for gradient descent.
+    - num_iters (int): Number of iterations for gradient descent.
+    - lambda1 (float): Regularization parameter for the sparsity normalization term.
+    - lambda2 (float): Regularization parameter for L1 sparsity constraint.
+
+    Returns:
+    - M (torch.Tensor): The generated mask of size (m, n) after optimization and thresholding.
+    """
+
+    def l12_loss(dW, Xj):
+        dW = dW.float()
+        Xj = Xj.float()
+
+        mult = dW @ Xj
+        l12 = torch.sum(torch.linalg.norm(mult, dim=1) ** 2)
+
+        return l12
+
+    def compute_l2_loss(dW):
+        loss = 0
+        for Xj in X:
+            loss += l12_loss(dW, Xj) / len(X)
+        return loss
+
+
+    reconstruction_loss_hist = []
+    sparsity_penalty_hist = []
+    l1_penalty_hist = []
+    loss_hist = []
+
+    norm_1 = None
+    norm_2 = None
+
+    if M0 is None:
+        # Initialize M with continuous values between 0 and 1
+        M = torch.rand(W.size(), requires_grad=True)
+    else:
+        M = M0.clone().requires_grad_()
+
+    # Define optimizer
+    optimizer = torch.optim.Adam([M], lr=lr)
+
+    for k in range(num_iters):
+        # Zero the gradients
+        optimizer.zero_grad()
+
+        # Compute the reconstruction loss
+        #reconstruction_loss = rec_loss(W, M, X)
+        #reconstruction_loss = rec_loss_with_dW(W, M, X, dW)
+        #reconstruction_loss = rec_loss_where_W_can_change(W0, W, M, X)
+
+        reconstruction_loss = compute_l2_loss(W*M)
+
+        # Compute the sparsity normalization term
+        current_density = M.mean()  # This is equivalent to sum(M) / (m * n)
+        sparsity_penalty = sparsity_lambda * (current_density + sparsity_ratio - 1) ** 2
+
+        # Compute the L1 regularization term
+        l1_penalty = torch.norm(M, p=1) / M.numel()
+
+        if norm_1 is None or norm_2 is None:
+            norm_1 = reconstruction_loss.item()
+            norm_2 = l1_penalty.item()
+
+        # Total loss is the sum of reconstruction loss, sparsity penalty, and L1 penalty
+        total_loss = reconstruction_loss / norm_1 + sparsity_penalty + l1_lambda*l1_penalty / norm_2
+
+        # Backpropagate the loss
+        total_loss.backward()
+
+        # Update M using the optimizer
+        optimizer.step()
+
+        reconstruction_loss_hist.append([k, reconstruction_loss.item() / norm_1])
+        sparsity_penalty_hist.append([k, sparsity_penalty.item()])
+        l1_penalty_hist.append([k, l1_lambda*l1_penalty.item() / norm_2])
+        loss_hist.append([k, total_loss.item()])
+
+        #print("k = ", k, " l = ", total_loss.item())
+
+        # Enforce M to stay in the range [0, 1]
+        with torch.no_grad():
+           M.clamp_(0.0, 1.0)
+
+    # print(M)
+
+    # After optimization, apply thresholding to achieve the exact sparsity ratio
+    with torch.no_grad():
+        # Flatten the mask and sort the values
+        #flat_M = torch.abs(M).flatten()
+        flat_M = M.flatten()
+        num_elements_to_keep = int(flat_M.numel() * (1 - sparsity_ratio))
+
+        # Find the threshold value for the top (1 - sparsity_ratio) proportion
+        threshold_value = torch.topk(flat_M, num_elements_to_keep, largest=True).values[-1]
+
+        # Set elements greater than or equal to the threshold to 1, and the rest to 0
+        M = (M >= threshold_value)
+
+        #mask = (M < threshold_value)
+        #W_new = W * M
+        #W_new[mask] = 0
+
+    #print("Reconstruction loss: ", reconstruction_loss_hist[-1][1])
+
+    #return M, W_new, reconstruction_loss_hist, sparsity_penalty_hist, l1_penalty_hist, loss_hist
+    return M
 
 
 class Thanos:
@@ -767,11 +891,40 @@ class Thanos:
         
         const_mask = None
         if use_constant_mask:
+
             # Global mask on Wanda metric
             glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
-            values, indices = torch.topk(glob_tmp.flatten(), int(W.numel()*sparsity), largest=False)
+            values, indices = torch.topk(glob_tmp.flatten(), int(W.numel() * sparsity), largest=False)
             const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
             const_mask.view(-1)[indices] = True
+
+            M0 = const_mask.to(dtype=torch.float)
+            gd_mask = gd_sparse_mask(W=W,
+                                     X=self.X,
+                                     M0=M0,
+                                     sparsity_ratio=sparsity,
+                                     lr=1e-1,
+                                     num_iters=20,
+                                     sparsity_lambda=50,
+                                     l1_lambda=0.01)
+
+            W_new_wanda = W.clone()
+            W_new_wanda[const_mask] = 0
+
+            W_new_gd = W.clone()
+            W_new_gd[gd_mask] = 0
+
+            if hasattr(self, 'X'):
+                gd_loss = compute_l2_loss(W_new_gd - W_old, self.X).item()
+                print("L2 Mask GD op =", gd_loss)
+
+                wanda_loss = compute_l2_loss(W_new_wanda - W_old, self.X).item()
+                print("L2 Mask Wanda =", wanda_loss)
+
+                if wanda_loss < gd_loss:
+                    print("*** WANDA IS BETTER CASE! ***")
+                else:
+                    const_mask = gd_mask
 
             # Global Wanda mask
             #glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))

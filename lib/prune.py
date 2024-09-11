@@ -1,7 +1,9 @@
 import time 
 import heapq 
 import torch 
-import torch.nn as nn 
+import torch.nn as nn
+import transformers
+
 from .sparsegpt import SparseGPT
 from .thanos import Thanos
 from .layerwrapper import WrappedGPT
@@ -84,6 +86,26 @@ def find_layers_in_order(module, layers=[nn.Linear], name=''):
     _find_layers_in_order(module, layers, name)
 
     return result
+
+
+def plot_heatmap(tensor, title):
+    import matplotlib.pyplot as plt
+
+    vmin, vmax = np.percentile(tensor.cpu().numpy(), [2, 98])
+
+    m, n = tensor.shape
+    plt.figure(figsize=(n / 100, m / 100), dpi=100)
+    plt.imshow(tensor.cpu().numpy(), cmap='viridis', aspect='auto', vmin=vmin, vmax=vmax)
+    plt.colorbar(label=r'$w_{ij}^2\|X_{j}\|_2^2$')
+    plt.title(title)
+    plt.xlabel('j')
+    plt.ylabel('i')
+
+    plt.tight_layout()
+
+    plt.savefig(title + ".png", format='png', dpi=100)
+    plt.close()
+
 
 def check_sparsity(model):
     use_cache = model.config.use_cache
@@ -187,7 +209,121 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
             W[W_mask] = 0
 
 
-def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+def l12_loss(dW, Xj):
+    dW = dW.float()
+    Xj = Xj.float()
+
+    mult = dW @ Xj
+    l12 = torch.sum(mult**2)
+
+    return l12
+
+
+def compute_l2_loss(dW, X):
+    loss = 0
+    for Xj in X:
+        loss += l12_loss(dW, Xj) / len(X)
+    return loss
+
+
+def gd_sparse_mask(W, X, M0=None, sparsity_ratio=0.5, lr=0.01, num_iters=100, sparsity_lambda=0.1, l1_lambda=0.1):
+    """
+    Generate a sparse mask M via minimizing the loss using Adam optimizer, with reconstruction loss,
+    sparsity loss, L1 regularization, and final thresholding to enforce exact sparsity.
+
+    Args:
+    - W (torch.Tensor): The weight matrix of size (m, n).
+    - X (torch.Tensor): The input matrix of size (n, l).
+    - sparsity_ratio (float): The desired sparsity ratio (e.g., 0.5 for 50% sparsity).
+    - lr (float): Learning rate for gradient descent.
+    - num_iters (int): Number of iterations for gradient descent.
+    - lambda1 (float): Regularization parameter for the sparsity normalization term.
+    - lambda2 (float): Regularization parameter for L1 sparsity constraint.
+
+    Returns:
+    - M (torch.Tensor): The generated mask of size (m, n) after optimization and thresholding.
+    """
+
+    reconstruction_loss_hist = []
+    sparsity_penalty_hist = []
+    l1_penalty_hist = []
+    loss_hist = []
+
+    norm_1 = None
+    norm_2 = None
+
+    if M0 is None:
+        # Initialize M with continuous values between 0 and 1
+        M = torch.rand(W.size(), requires_grad=True)
+    else:
+        M = M0.clone().requires_grad_()
+
+    # Define optimizer
+    optimizer = torch.optim.Adam([M], lr=lr)
+
+    for k in range(num_iters):
+        # Zero the gradients
+        optimizer.zero_grad()
+
+        # Compute the reconstruction loss
+        reconstruction_loss = compute_l2_loss(W*M, X)
+
+        # Compute the L1 regularization term
+        l1_penalty = torch.mean(torch.abs(M))
+
+        # Compute the sparsity normalization term
+        sparsity_penalty = (l1_penalty + sparsity_ratio - 1) ** 2
+
+        if norm_1 is None or norm_2 is None:
+            norm_1 = reconstruction_loss.item()
+            norm_2 = l1_penalty.item()
+
+        # Total loss is the sum of reconstruction loss, sparsity penalty, and L1 penalty
+        total_loss = reconstruction_loss / norm_1 + sparsity_lambda*sparsity_penalty + l1_lambda*l1_penalty / norm_2
+
+        # Backpropagate the loss
+        total_loss.backward()
+
+        # Update M using the optimizer
+        optimizer.step()
+
+        reconstruction_loss_hist.append([k, reconstruction_loss.item() / norm_1])
+        sparsity_penalty_hist.append([k, sparsity_penalty.item()])
+        l1_penalty_hist.append([k, l1_lambda*l1_penalty.item() / norm_2])
+        loss_hist.append([k, total_loss.item()])
+
+        #print("k = ", k, " l = ", total_loss.item())
+
+        # Enforce M to stay in the range [0, 1]
+        with torch.no_grad():
+           M.clamp_(0.0, 1.0)
+
+    # print(M)
+
+    # After optimization, apply thresholding to achieve the exact sparsity ratio
+    with torch.no_grad():
+        # Flatten the mask and sort the values
+        #flat_M = torch.abs(M).flatten()
+        flat_M = M.flatten()
+        num_elements_to_keep = int(flat_M.numel() * (1 - sparsity_ratio))
+
+        # Find the threshold value for the top (1 - sparsity_ratio) proportion
+        threshold_value = torch.topk(flat_M, num_elements_to_keep, largest=True).values[-1]
+
+        # Set elements greater than or equal to the threshold to 1, and the rest to 0
+        M = (M >= threshold_value)
+
+        #mask = (M < threshold_value)
+        #W_new = W * M
+        #W_new[mask] = 0
+
+    #print("Reconstruction loss: ", reconstruction_loss_hist[-1][1])
+
+    #return M, W_new, reconstruction_loss_hist, sparsity_penalty_hist, l1_penalty_hist, loss_hist
+    return M
+
+
+def prune_opt_mask(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
@@ -197,6 +333,9 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     with torch.no_grad():
         #inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, args.nsamples)
         inps, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, args.nsamples)
+
+    average_l2_loss = 0
+    average_l2_loss_wanda = 0
 
     layers = model.model.layers
     for i in range(len(layers)):
@@ -212,7 +351,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         wrapped_layers = {}
         for name in subset:
-            wrapped_layers[name] = WrappedGPT(subset[name])
+            wrapped_layers[name] = WrappedGPT(subset[name], store_inputs=True)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -225,7 +364,150 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
         for j in range(args.nsamples):
             with torch.no_grad():
                 #outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-                layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                layer(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
+        for h in handles:
+            h.remove()
+
+        for name in subset:
+            W = wrapped_layers[name].layer.weight.data.clone()
+            if isinstance(wrapped_layers[name].layer, nn.Conv2d):
+                W = W.flatten(1)
+            if isinstance(wrapped_layers[name].layer, transformers.Conv1D):
+                W = W.t()
+            W = W.float()
+
+            if hasattr(wrapped_layers[name], 'X'):
+                W_old = W.clone()
+
+            X = wrapped_layers[name].X
+            scaler_row = wrapped_layers[name].scaler_row
+
+            print(f"pruning layer {i} name {name}")
+            W_metric = torch.abs(W) * torch.sqrt(scaler_row.reshape((1, -1)))
+
+            W_mask = (torch.zeros_like(W_metric) == 1)  ## initialize a mask to be all False
+            if prune_n != 0:
+                # structured n:m sparsity
+                for ii in range(W_metric.shape[1]):
+                    if ii % prune_m == 0:
+                        tmp = W_metric[:,ii:(ii+prune_m)].float()
+                        W_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
+            else:
+                sort_res = torch.sort(W_metric, dim=-1, stable=True)
+
+                if args.use_variant:
+                    # wanda variant
+                    tmp_metric = torch.cumsum(sort_res[0], dim=1)
+                    sum_before = W_metric.sum(dim=1)
+
+                    alpha = 0.4
+                    alpha_hist = [0., 0.8]
+                    W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
+                    while (torch.abs(cur_sparsity - args.sparsity_ratio)>0.001) and (alpha_hist[1]-alpha_hist[0]>=0.001):
+                        if cur_sparsity > args.sparsity_ratio:
+                            alpha_new = (alpha + alpha_hist[0]) / 2.0
+                            alpha_hist[1] = alpha
+                        else:
+                            alpha_new = (alpha + alpha_hist[1]) / 2.0
+                            alpha_hist[0] = alpha
+
+                        alpha = alpha_new
+                        W_mask, cur_sparsity = return_given_alpha(alpha, sort_res, W_metric, tmp_metric, sum_before)
+                    print(f"alpha found {alpha} sparsity {cur_sparsity:.6f}")
+                else:
+                    # unstructured pruning
+                    indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
+                    W_mask.scatter_(1, indices, True)
+
+            #save_mask_as_rgb_image(W_mask, "data/llama2_mask_image_" + name + ".png")
+            #subset[name].weight.data[W_mask] = 0  ## set weights to zero
+
+            M0 = W_mask.to(dtype=torch.float)
+            gd_mask = gd_sparse_mask(W=W,
+                                     X=X,
+                                     M0=M0,
+                                     sparsity_ratio=args.sparsity_ratio,
+                                     lr=1e-1,
+                                     num_iters=20,
+                                     sparsity_lambda=50,
+                                     l1_lambda=0.01)
+
+            # W_new = W * M0
+            W_new_wanda = W.clone()
+            W_new_wanda[W_mask] = 0
+
+            W_new_gd = W.clone()
+            W_new_gd[gd_mask] = 0
+
+            if hasattr(wrapped_layers[name], 'X'):
+                gd_loss = compute_l2_loss(W_new_gd - W_old, X).item()
+                average_l2_loss += gd_loss / len(wrapped_layers)
+                print("L2 GD op =", gd_loss)
+
+                wanda_loss = compute_l2_loss(W_new_wanda - W_old, X).item()
+                average_l2_loss_wanda += wanda_loss / len(wrapped_layers)
+                print("L2 Wanda =", wanda_loss)
+
+                if wanda_loss < gd_loss:
+                    print("*** WANDA IS BETTER CASE! ***")
+                    subset[name].weight.data = W_new_wanda.half()
+                else:
+                    subset[name].weight.data = W_new_gd.half()
+
+        #sys.exit()
+
+        for j in range(args.nsamples):
+            with torch.no_grad():
+                #outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+                inps[j] = out.reshape((-1, out.shape[-1])).to(torch.device("cpu"))
+        #inps, outs = outs, inps
+
+    if average_l2_loss != 0:
+        average_l2_loss /= len(layers)
+        average_l2_loss_wanda /= len(layers)
+        print("Average L2 GD opt loss =", average_l2_loss)
+        print("Average L2 Wanda loss =", average_l2_loss_wanda)
+
+
+    model.config.use_cache = use_cache
+    torch.cuda.empty_cache()
+
+
+def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+    use_cache = model.config.use_cache
+    model.config.use_cache = False
+
+    print("loading calibdation data")
+    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    print("dataset loading complete")
+    with torch.no_grad():
+        inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device)
+
+    layers = model.model.layers
+    for i in range(len(layers)):
+        layer = layers[i]
+        subset = find_layers(layer)
+
+        if f"model.layers.{i}" in model.hf_device_map:   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
+            dev = model.hf_device_map[f"model.layers.{i}"]
+            inps, outs, attention_mask, position_ids = inps.to(dev), outs.to(dev), attention_mask.to(dev), position_ids.to(dev)
+
+        wrapped_layers = {}
+        for name in subset:
+            wrapped_layers[name] = WrappedGPT(subset[name])
+
+        def add_batch(name):
+            def tmp(_, inp, out):
+                wrapped_layers[name].add_batch(inp[0].data, out.data)
+            return tmp
+
+        handles = []
+        for name in wrapped_layers:
+            handles.append(subset[name].register_forward_hook(add_batch(name)))
+        for j in range(args.nsamples):
+            with torch.no_grad():
+                outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
         for h in handles:
             h.remove()
 
@@ -267,18 +549,12 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                     indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                     W_mask.scatter_(1, indices, True)
 
-            save_mask_as_rgb_image(W_mask, "data/llama2_mask_image_" + name + ".png")
-
             subset[name].weight.data[W_mask] = 0  ## set weights to zero
-
-        sys.exit()
 
         for j in range(args.nsamples):
             with torch.no_grad():
-                #outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-                out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-                inps[j] = out.reshape((-1, out.shape[-1])).to(torch.device("cpu"))
-        #inps, outs = outs, inps
+                outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
+        inps, outs = outs, inps
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
@@ -610,11 +886,14 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             #else:
             #    current_sparsity = 0.5
 
+            #glob_tmp = torch.abs(gpts[name].W) * torch.sqrt(gpts[name].scaler_row).reshape((1, -1))
+            #plot_heatmap(glob_tmp, name)
+
             gpts[name].snap(args.sparsity_ratio,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=1,
+                            blocksize=512,
                             v_blocksize=128,
                             adaptive_blocksize=False)
 

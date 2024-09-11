@@ -50,6 +50,7 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
     # Generate samples from training set
     random.seed(seed)
     trainloader = []
+
     for _ in range(nsamples):
         while True:
             i = random.randint(0, len(traindata) - 1)
@@ -61,6 +62,7 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
         inp = trainenc.input_ids[:, i:j]
         tar = inp.clone()
         tar[:, :-1] = -100
+
         trainloader.append((inp, tar))
 
     # Prepare validation dataset
