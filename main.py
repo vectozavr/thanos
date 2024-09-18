@@ -64,18 +64,19 @@ def main():
 
     # Mistral
     # mistralai/Mistral-7B-v0.1
+    # mistralai/Mixtral-8x7B-Instruct-v0.1
 
     # Phi-3-mini-4k-instruct (3.8b)
     # microsoft/Phi-3-mini-4k-instruct
 
-    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-7b-hf")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="mistralai/Mistral-7B-v0.1")
     #parser.add_argument('--model', type=str, help='LLaMA model', default="llm_weights/pruned_llama2_7b/unstructured/thanos_blocksize_128_dynamic_mask")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
-    parser.add_argument('--nsamples', type=int, default=64, help='Number of calibration samples.')
+    parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos",
-                        "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", "ablate_wanda_iter", "search"], default="wanda")
+                        "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", "ablate_wanda_iter", "search"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')

@@ -7,7 +7,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
-from lib.prune_opt import prune_opt_mask, prune_wanda, prune_magnitude, prune_sparsegpt, prune_thanos, prune_ablate, check_sparsity, find_layers
+from lib.prune_opt import prune_opt_full_layer, prune_opt_mask, prune_wanda, prune_magnitude, prune_sparsegpt, prune_thanos, prune_ablate, check_sparsity, find_layers
 from lib.eval import eval_ppl
 
 # In case you want to select particular GPUs
@@ -52,12 +52,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
-    parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
+    parser.add_argument('--nsamples', type=int, default=64, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos",
                                                              "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter",
-                                                             "ablate_wanda_iter", "search"], default="wanda")
+                                                             "ablate_wanda_iter", "search", "opt_mask", "opt_full_layer"], default="opt_mask")
+
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--use_variant', action="store_true",
                         help="whether to use the wanda variant described in the appendix")
@@ -96,6 +97,8 @@ def main():
             prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "opt_mask":
             prune_opt_mask(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        elif args.prune_method == "opt_full_layer":
+            prune_opt_full_layer(args, model, tokenizer, device)
         elif args.prune_method == "magnitude":
             prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "sparsegpt":

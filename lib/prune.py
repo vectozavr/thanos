@@ -5,6 +5,7 @@ import torch.nn as nn
 import transformers
 
 from .sparsegpt import SparseGPT
+from .thanos_multicase import ThanosMultiCase
 from .thanos import Thanos
 from .layerwrapper import WrappedGPT
 from .data import get_loaders
@@ -143,11 +144,11 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
         device = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
-    #inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=device)
 
+    #inps = torch.zeros((128, min(4096, model.seqlen), model.config.hidden_size), dtype=dtype, device=device)
     inps = [None for _ in range(nsamples)]
 
-    #inps.requires_grad = False
+    inps.requires_grad = False
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
     class Catcher(nn.Module):
@@ -174,6 +175,7 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
     position_ids = cache['position_ids']
     model.config.use_cache = use_cache
 
+    #return inps, outs, attention_mask, position_ids
     return inps, attention_mask, position_ids
 
 
@@ -479,6 +481,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     model.config.use_cache = False
 
     print("loading calibdation data")
+
     dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
     print("dataset loading complete")
     with torch.no_grad():
@@ -491,7 +494,9 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         if f"model.layers.{i}" in model.hf_device_map:   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
             dev = model.hf_device_map[f"model.layers.{i}"]
-            inps, outs, attention_mask, position_ids = inps.to(dev), outs.to(dev), attention_mask.to(dev), position_ids.to(dev)
+            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(dev)
 
         wrapped_layers = {}
         for name in subset:
@@ -663,7 +668,7 @@ def prune_ablate(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     ## SparseGPT code available at: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
     print('Starting ...')
-    dataloader, _ = get_loaders("c4",nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
+    dataloader, _ = get_loaders("c4",args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -674,7 +679,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
-        (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
+        (args.nsamples, min(4096, model.seqlen), model.config.hidden_size), dtype=dtype, device=dev
     )
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
@@ -709,7 +714,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             dev = model.hf_device_map[f"model.layers.{i}"]
             print(f"layer {i} device {dev}")
             inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
-            if attention_mask:
+            if attention_mask is not None:
                 attention_mask = attention_mask.to(dev)
 
         recompute = False
@@ -808,11 +813,11 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         dev = model.hf_device_map["model.embed_tokens"]
 
     dtype = next(iter(model.parameters())).dtype
-    #inps = torch.zeros(
-    #    (args.nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
-    #)
+    inps = torch.zeros(
+        (args.nsamples, min(4096, model.seqlen), model.config.hidden_size), dtype=dtype, device=dev
+    )
 
-    inps = [None for _ in range(args.nsamples)]
+    #inps = [None for _ in range(args.nsamples)]
 
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
 
@@ -821,8 +826,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             super().__init__()
             self.module = module
         def forward(self, inp, **kwargs):
-            #inps[cache['i']] = inp
-            inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
+            inps[cache['i']] = inp
+            #inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
             cache['position_ids'] = kwargs['position_ids']
@@ -837,7 +842,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
     layers[0] = layers[0].module
     torch.cuda.empty_cache()
 
-    #outs = torch.zeros_like(inps)
+    outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
     position_ids = cache['position_ids']
 
@@ -851,7 +856,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             dev = model.hf_device_map[f"model.layers.{i}"]
             print(f"layer {i} device {dev}")
 
-            #inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(dev)
 
@@ -860,6 +865,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         gpts = {}
         for name in subset:
             gpts[name] = Thanos(subset[name], store_inputs=False)
+            #gpts[name] = ThanosMultiCase(subset[name], store_inputs=False)
 
         def add_batch(name):
             def tmp(_, inp, out):
@@ -881,20 +887,18 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             print(i, name)
             print('Pruning ...')
 
-            #if "gate_proj" in name or "up_proj" in name:
-            #    current_sparsity = 0
-            #else:
-            #    current_sparsity = 0.5
-
-            #glob_tmp = torch.abs(gpts[name].W) * torch.sqrt(gpts[name].scaler_row).reshape((1, -1))
-            #plot_heatmap(glob_tmp, name)
-
+            #gpts[name].snap(args.sparsity_ratio,
+            #                prune_n=prune_n,
+            #                prune_m=prune_m,
+            #                percdamp=0.01,
+            #                blocksize=128,
+            #                v_blocksize=512,
+            #                adaptive_blocksize=False)
             gpts[name].snap(args.sparsity_ratio,
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=512,
-                            v_blocksize=128,
+                            blocksize=128,
                             adaptive_blocksize=False)
 
             if gpts[name].l2_loss is not None:
@@ -905,14 +909,12 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
-            #inps[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-            out = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-            inps[j] = out.reshape((-1, out.shape[-1])).to(torch.device("cpu"))
+            outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
 
         layers[i] = layer
         torch.cuda.empty_cache()
 
-        #inps, outs = outs, inps
+        inps, outs = outs, inps
 
     if average_l2_loss != 0:
         average_l2_loss /= len(layers)

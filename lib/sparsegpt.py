@@ -10,14 +10,20 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
 
-def l12_loss(dW, X):
+def l2_loss(dW, Xj):
     dW = dW.float()
-    X = X.float()
+    Xj = Xj.float()
 
-    mult = dW @ X
-    l12 = torch.sum(torch.linalg.norm(mult, dim=1)**2)
+    mult = dW @ Xj
 
-    return l12
+    return torch.sum(mult ** 2)
+
+
+def compute_l2_loss(dW, X):
+    loss = 0
+    for Xj in X:
+        loss += l2_loss(dW, Xj) / len(X)
+    return loss
 
 
 def plot_heatmap(tensor, title):
@@ -76,35 +82,6 @@ class SparseGPT:
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         self.H += inp.matmul(inp.t())
 
-    def __compute_l2_loss(self, dW):
-        if not hasattr(self, 'X'):
-            raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
-
-        loss = 0
-
-        for Xj in self.X:
-            loss += l12_loss(dW, Xj)
-        loss /= len(self.X)
-
-        return loss
-
-    def __compute_l2_relative_loss(self, W, W_old):
-        if not hasattr(self, 'X'):
-            raise AttributeError("Cannot compute L2 loss: self.X is not defined.")
-
-        dW = W - W_old
-
-        loss = 0
-
-        for Xj in self.X:
-            l12 = l12_loss(dW, Xj)
-            l12_abs = l12_loss(W_old, Xj)
-
-            loss += l12 / l12_abs
-
-        loss /= len(self.X)
-
-        return loss
 
     def fasterprune(
         self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01
@@ -183,6 +160,8 @@ class SparseGPT:
 
             W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
 
+        print('Layer pruning time %.2f' % (time.time() - tick))
+
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):
             W = W.t()
@@ -190,7 +169,7 @@ class SparseGPT:
 
 
         if hasattr(self, 'X'):
-            self.l2_loss = self.__compute_l2_loss(W - W_old)
+            self.l2_loss = compute_l2_loss(W - W_old, self.X)
             #self.l2_loss = self.__compute_l2_relative_loss(W, W_old)
             print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
