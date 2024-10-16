@@ -7,16 +7,11 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
-from lib.prune import prune_opt_mask, prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, prune_ablate, check_sparsity
+from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, check_sparsity
 from lib.eval import eval_ppl
 
-from lib.printtg import print_tg
-
 # In case you want to select particular GPUs
-#os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
-
-import warnings
-warnings.filterwarnings("ignore")
+#os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
 print("CUDA Available:", torch.cuda.is_available())
 for i in range(torch.cuda.device_count()):
@@ -26,6 +21,7 @@ print('torch', version('torch'))
 print('transformers', version('transformers'))
 print('accelerate', version('accelerate'))
 print('# of gpus: ', torch.cuda.device_count())
+
 
 def get_llm(model_name, cache_dir="llm_weights"):
     model = AutoModelForCausalLM.from_pretrained(
@@ -40,10 +36,6 @@ def get_llm(model_name, cache_dir="llm_weights"):
     return model
 
 def main():
-    torch.cuda.empty_cache()
-
-    parser = argparse.ArgumentParser()
-
     # Llama 1 family models:
     # baffo32/decapoda-research-llama-7b-hf
     # baffo32/decapoda-research-llama-13b-hf
@@ -55,34 +47,41 @@ def main():
     # meta-llama/Llama-2-13b-hf
     # meta-llama/Llama-2-70b-hf
 
-    # Llama 3 family models:
-    # meta-llama/Meta-Llama-3-8B
-    # meta-llama/Meta-Llama-3-70B
-
     # Tiny Llama
     # TinyLlama/TinyLlama-1.1B-Chat-v1.0
+
+    # Llama 3 family models:
+    # meta-llama/Llama-3.2-1B
+    # meta-llama/Llama-3.2-3B
+    # meta-llama/Llama-3.2-11B-Vision
+    # meta-llama/Meta-Llama-3-8B
+    # meta-llama/Meta-Llama-3-70B
 
     # Mistral
     # mistralai/Mistral-7B-v0.1
     # mistralai/Mixtral-8x7B-Instruct-v0.1
 
-    # Phi-3-mini-4k-instruct (3.8b)
-    # microsoft/Phi-3-mini-4k-instruct
+    # OPT family models:
+    # facebook/opt-125m
+    # facebook/opt-350m
+    # facebook/opt-1.3b
+    # facebook/opt-2.7b
+    # facebook/opt-6.7b
+    # facebook/opt-13b
+    # facebook/opt-30b
+    # facebook/opt-66b
+    # facebook/opt-175b
 
-    parser.add_argument('--model', type=str, help='LLaMA model', default="mistralai/Mistral-7B-v0.1")
-    #parser.add_argument('--model', type=str, help='LLaMA model', default="llm_weights/pruned_llama2_7b/unstructured/thanos_blocksize_128_dynamic_mask")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
-    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos",
-                        "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", "ablate_wanda_iter", "search"], default="thanos")
+    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
-    parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
-    #parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
-
     args = parser.parse_args()
 
     # Setting seeds for reproducibility
@@ -97,30 +96,28 @@ def main():
 
     model_name = args.model.split("/")[-1]
     print(f"loading llm model {args.model}")
+
     model = get_llm(args.model, args.cache_dir)
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False)
 
     device = torch.device("cuda:0")
-    if "30b" in args.model or "65b" in args.model:  # for 30b and 65b we use device_map to load onto multiple A6000 GPUs, thus the processing here.
+    if "30b" in args.model or "65b" in args.model:
         device = model.hf_device_map["lm_head"]
     print("use device ", device)
 
     if args.sparsity_ratio != 0:
         print("Pruning starts by " + args.prune_method)
+
         tick = time.time()
         if args.prune_method == "wanda":
             prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif args.prune_method == "opt_mask":
-            prune_opt_mask(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "magnitude":
             prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "sparsegpt":
             prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "thanos":
             prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-        elif "ablate" in args.prune_method:
-            prune_ablate(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
 
         print(args.prune_method + ' time %.2f' % (time.time() - tick))
 
@@ -131,17 +128,19 @@ def main():
     print(f"sparsity sanity check {sparsity_ratio:.4f}")
     print("*"*30)
     ################################################################
+
     ppl_test = eval_ppl(args, model, tokenizer, device)
     print(f"wikitext perplexity {ppl_test}")
 
     if not os.path.exists(args.save):
         os.makedirs(args.save)
     save_filepath = os.path.join(args.save, f"log_{args.prune_method}.txt")
+
     with open(save_filepath, "w") as f:
         print("method\tactual_sparsity\tppl_test", file=f, flush=True)
         print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}", file=f, flush=True)
 
-    if args.save_model and args.sparsity_ratio != 0:
+    if args.save_model:
         model.save_pretrained(args.save_model)
         tokenizer.save_pretrained(args.save_model)
 

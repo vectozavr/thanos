@@ -3,6 +3,8 @@
 import numpy as np
 import random
 import torch
+import os
+
 from datasets import load_dataset
 
 
@@ -30,7 +32,13 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
 
     # Generate samples from training set
     random.seed(seed)
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
+
     trainloader = []
+
+    seqlen = min(2048, seqlen)
+
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
         j = i + seqlen
@@ -47,11 +55,14 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
     traindata = load_dataset('allenai/c4', data_files={'train': 'en/c4-train.00000-of-01024.json.gz'}, split='train')
     valdata = load_dataset('allenai/c4', data_files={'validation': 'en/c4-validation.00000-of-00008.json.gz'}, split='validation')
 
-    # Generate samples from training setz
+    # Generate samples from training set
     random.seed(seed)
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
+
     trainloader = []
 
-    seqlen = min(4096, seqlen)
+    seqlen = min(2048, seqlen)
 
     for _ in range(nsamples):
         while True:
@@ -75,8 +86,33 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
 
 
 # Function to select the appropriate loader based on dataset name
-def get_loaders(name, nsamples=256, seed=0, seqlen=2048, tokenizer=None):
-    if 'wikitext2' in name:
-        return get_wikitext2(nsamples, seed, seqlen, tokenizer)
-    if "c4" in name:
-        return get_c4(nsamples, seed, seqlen, tokenizer)
+def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
+
+    cache_dir = "loaders_cache"
+    name_cache_dir = name + "_nsamples_" + str(nsamples) + "_seed_" + str(seed) + "_" + tokenizer.name_or_path.split('/')[-1]
+
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    full_cache_dir = os.path.join(cache_dir, name_cache_dir)
+    full_cache_dir_train = os.path.join(full_cache_dir, 'train.pt')
+    full_cache_dir_test = os.path.join(full_cache_dir, 'test.pt')
+
+    train_loader, test_loader = None, None
+
+    if os.path.exists(full_cache_dir):
+        train_loader = torch.load(full_cache_dir_train, weights_only=True)
+        test_loader = torch.load(full_cache_dir_test, weights_only=False)
+    else:
+        match name:
+            case 'wikitext2':
+                train_loader, test_loader = get_wikitext2(nsamples, seed, seqlen, tokenizer)
+            case 'c4':
+                train_loader, test_loader = get_c4(nsamples, seed, seqlen, tokenizer)
+
+        os.makedirs(full_cache_dir)
+
+        torch.save(train_loader, full_cache_dir_train)
+        torch.save(test_loader, full_cache_dir_test)
+
+    return train_loader, test_loader

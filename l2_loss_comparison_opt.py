@@ -7,7 +7,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
-from lib.prune_opt import prune_wanda, prune_magnitude, prune_sparsegpt, prune_thanos, prune_ablate, check_sparsity, find_layers
+from lib.prune import prune_wanda, prune_magnitude, prune_sparsegpt, prune_thanos, check_sparsity, find_layers
 from lib.eval import eval_ppl
 
 # In case you want to select particular GPUs
@@ -50,7 +50,7 @@ def main():
     # facebook/opt-175b
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-350m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
@@ -77,8 +77,6 @@ def main():
 
     step = 0.01
 
-    is_store_all_loses = True
-
     for sparsity in torch.arange(step, 1.0, step):
 
         args.sparsity_ratio = sparsity
@@ -88,57 +86,43 @@ def main():
         torch.random.manual_seed(args.seed)
         model = get_llm(args.model, args.cache_dir)
         model.eval()
-        l2_sparsegpt = prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, is_store_all_loses=is_store_all_loses)
-        if not is_store_all_loses:
-            ppl_sparsegpt = eval_ppl(args, model, tokenizer, device)
+        l2_sparsegpt = prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        ppl_sparsegpt = eval_ppl(args, model, tokenizer, device)
 
         # Wanda part
         np.random.seed(args.seed)
         torch.random.manual_seed(args.seed)
         model = get_llm(args.model, args.cache_dir)
         model.eval()
-        l2_wanda = prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, is_store_all_loses=is_store_all_loses)
-        if not is_store_all_loses:
-            ppl_wanda = eval_ppl(args, model, tokenizer, device)
+        l2_wanda = prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        ppl_wanda = eval_ppl(args, model, tokenizer, device)
 
         # Thanos part
         np.random.seed(args.seed)
         torch.random.manual_seed(args.seed)
         model = get_llm(args.model, args.cache_dir)
         model.eval()
-        l2_thanos = prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, is_store_all_loses=is_store_all_loses)
-        if not is_store_all_loses:
-            ppl_thanos = eval_ppl(args, model, tokenizer, device)
+        l2_thanos = prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+        ppl_thanos = eval_ppl(args, model, tokenizer, device)
 
-        print("sparsity:", sparsity, " -> l2 = [", l2_sparsegpt, l2_wanda, l2_thanos, "]")
-        if not is_store_all_loses:
-            print("sparsity:", sparsity, " -> ppl = [", ppl_sparsegpt, ppl_wanda, ppl_thanos, "]")
+        #print("sparsity:", sparsity, " -> l2 = [", l2_sparsegpt, l2_wanda, l2_thanos, "]")
+        print("sparsity:", sparsity, " -> ppl = [", ppl_sparsegpt, ppl_wanda, ppl_thanos, "]")
 
-        if not is_store_all_loses:
-            hist_l2_sparsegpt.append([sparsity, l2_sparsegpt])
-            hist_l2_wanda.append([sparsity, l2_wanda])
-            hist_l2_thanos.append([sparsity, l2_thanos])
+        #hist_l2_sparsegpt.append([sparsity, l2_sparsegpt])
+        #hist_l2_wanda.append([sparsity, l2_wanda])
+        #hist_l2_thanos.append([sparsity, l2_thanos])
 
-            hist_ppl_sparsegpt.append([sparsity, ppl_sparsegpt])
-            hist_ppl_wanda.append([sparsity, ppl_wanda])
-            hist_ppl_thanos.append([sparsity, ppl_thanos])
-        else:
-            hist_l2_sparsegpt.append([[sparsity, l2_layer] for l2_layer in l2_sparsegpt])
-            hist_l2_wanda.append([[sparsity, l2_layer] for l2_layer in l2_wanda])
-            hist_l2_thanos.append([[sparsity, l2_layer] for l2_layer in l2_thanos])
+        hist_ppl_sparsegpt.append([sparsity, ppl_sparsegpt])
+        hist_ppl_wanda.append([sparsity, ppl_wanda])
+        hist_ppl_thanos.append([sparsity, ppl_thanos])
 
-    if not is_store_all_loses:
-        np.save('hist_l2_sparsegpt.npy', np.array(hist_l2_sparsegpt))
-        np.save('hist_l2_wanda.npy', np.array(hist_l2_wanda))
-        np.save('hist_l2_thanos.npy', np.array(hist_l2_thanos))
+    #np.save('hist_l2_sparsegpt.npy', np.array(hist_l2_sparsegpt))
+    #np.save('hist_l2_wanda.npy', np.array(hist_l2_wanda))
+    #np.save('hist_l2_thanos.npy', np.array(hist_l2_thanos))
 
-        np.save('hist_ppl_sparsegpt.npy', np.array(hist_ppl_sparsegpt))
-        np.save('hist_ppl_wanda.npy', np.array(hist_ppl_wanda))
-        np.save('hist_ppl_thanos.npy', np.array(hist_ppl_thanos))
-    else:
-        np.save('data/hist_layers_l2_sparsegpt.npy', np.array(hist_l2_sparsegpt))
-        np.save('data/hist_layers_l2_wanda.npy', np.array(hist_l2_wanda))
-        np.save('data/hist_layers_l2_thanos.npy', np.array(hist_l2_thanos))
+    np.save('hist_ppl_sparsegpt.npy', np.array(hist_ppl_sparsegpt))
+    np.save('hist_ppl_wanda.npy', np.array(hist_ppl_wanda))
+    np.save('hist_ppl_thanos.npy', np.array(hist_ppl_thanos))
 
 
 if __name__ == '__main__':
