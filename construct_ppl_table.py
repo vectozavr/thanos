@@ -54,25 +54,28 @@ def create_initial_table():
     return df, models, methods, sparsities
 
 
-def save_table_to_csv(df, filename='ppl_table', dir="out"):
-    if not os.path.exists(dir):
-        os.makedirs(dir)
-    save_filepath = os.path.join(dir, f"{filename}.csv")
+def save_table_to_csv(df, filename='ppl_table', save_dir="out"):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    save_filepath = os.path.join(save_dir, f"{filename}.csv")
     df.to_csv(save_filepath)
 
 
-def load_csv_and_print_latex(filename='ppl_table', dir="out"):
-    load_filepath = os.path.join(dir, f"{filename}.csv")
+def load_csv_and_print_latex(filename='ppl_table', load_dir="out"):
+    load_filepath = os.path.join(load_dir, f"{filename}.csv")
     df = pd.read_csv(load_filepath, index_col=[0, 1])
     print_latex_table(df)
 
 
 def print_latex_table(df):
-    latex_table = df.round(2).to_latex()
+    latex_table = df.applymap(lambda x: f"{x: .2f}" if pd.notnull(x) else x).to_latex()
     print(latex_table)
 
 
 def main():
+    load_csv_and_print_latex()
+    return 0
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
@@ -118,7 +121,7 @@ def main():
                         prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
 
                 ppl_pruned = eval_ppl(args, model, tokenizer, device)
-                ppl_table.loc[(sparsity_type, model_name), method] = ppl_pruned
+                ppl_table.loc[(sparsity_type, method), model_name] = ppl_pruned
 
                 # Save intermediate state to CSV
                 save_table_to_csv(ppl_table)
