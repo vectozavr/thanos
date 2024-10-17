@@ -8,7 +8,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
 from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, check_sparsity
-from lib.eval import eval_ppl
+from lib.eval import eval_ppl, eval_zero_shot
+
+from lm_eval import evaluator
 
 # In case you want to select particular GPUs
 #os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
@@ -78,10 +80,11 @@ def main():
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"], default="unstructured")
-    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="thanos")
+    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="wanda")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
+    parser.add_argument("--eval_zero_shot", action="store_true")
     args = parser.parse_args()
 
     # Setting seeds for reproducibility
@@ -143,6 +146,23 @@ def main():
     if args.save_model:
         model.save_pretrained(args.save_model)
         tokenizer.save_pretrained(args.save_model)
+
+    if args.eval_zero_shot:
+        # Evaluate using lm-evaluation-harness
+        task_list = ['winogrande', 'openbookqa', 'boolq', 'piqa', 'hellaswag', 'arc_easy', 'arc_challenge']
+        accelerate = False
+        if "30b" in args.model or "65b" in args.model or "70b" in args.model:
+            accelerate = True
+
+        num_shot = 0
+        results = eval_zero_shot(args.model, model, tokenizer, task_list, num_shot, accelerate)
+        print("zero_shot evaluation results")
+
+        name_to_acc = {task: data['acc,none'] * 100 for task, data in results['results'].items()}
+        average_score = sum(name_to_acc.values()) / len(name_to_acc)
+
+        print(name_to_acc)
+        print("Average:", average_score)
 
 
 if __name__ == '__main__':

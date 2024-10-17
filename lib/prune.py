@@ -209,9 +209,11 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         if f"model.layers.{i}" in model.hf_device_map:
             dev = model.hf_device_map[f"model.layers.{i}"]
-            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            inps, outs = inps.to(dev), outs.to(dev)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(dev)
+            if position_ids is not None:
+                position_ids = position_ids.to(dev)
 
         wrapped_layers = {}
         for name in subset:
@@ -319,9 +321,12 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
         if f"model.layers.{i}" in model.hf_device_map:
             dev = model.hf_device_map[f"model.layers.{i}"]
             print(f"layer {i} device {dev}")
-            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            inps, outs = inps.to(dev), outs.to(dev)
+
             if attention_mask is not None:
                 attention_mask = attention_mask.to(dev)
+            if position_ids is not None:
+                position_ids = position_ids.to(dev)
 
         subset = find_layers(block)
 
@@ -433,9 +438,11 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             dev = model.hf_device_map[f"model.layers.{i}"]
             print(f"layer {i} device {dev}")
 
-            inps, outs, position_ids = inps.to(dev), outs.to(dev), position_ids.to(dev)
+            inps, outs = inps.to(dev), outs.to(dev)
             if attention_mask is not None:
                 attention_mask = attention_mask.to(dev)
+            if position_ids is not None:
+                position_ids = position_ids.to(dev)
 
         subset = find_layers(block)
 

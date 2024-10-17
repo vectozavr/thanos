@@ -73,8 +73,8 @@ def print_latex_table(df):
 
 
 def main():
-    load_csv_and_print_latex()
-    return 0
+    #load_csv_and_print_latex()
+    #return 0
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
