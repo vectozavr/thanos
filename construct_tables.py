@@ -205,26 +205,32 @@ def main():
                 if pd.notna(ppl_table.loc[(sparsity_type, method), model_name]) and (not args.eval_zero_shot or pd.notna(eval_avg_table.loc[(sparsity_type, method), model_name])):
                     continue
 
-                model = get_llm(model_name, args.cache_dir)
-                model.eval()
-                tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+                try:
+                    model = get_llm(model_name, args.cache_dir)
+                    model.eval()
+                    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+                except:  # in case when the model is too large for this GPUs
+                    continue
 
                 device = torch.device("cuda:0")
                 if "30b" in model_name or "65b" in model_name:
                     device = model.hf_device_map["lm_head"]
 
                 print("Pruning of " + model_name + " by " + method + " with " + sparsity_type + " sparsity.")
-                match method:
-                    case 'Magnitude':
-                        prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                    case 'SparseGPT':
-                        prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                    case 'Wanda':
-                        prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                    case 'Thanos':
-                        prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
-                    case _:
-                        pass
+                try:
+                    match method:
+                        case 'Magnitude':
+                            prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        case 'SparseGPT':
+                            prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        case 'Wanda':
+                            prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        case 'Thanos':
+                            prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        case _:
+                            pass
+                except:  # in case when the model is too large for this GPUs
+                    continue
 
                 # Perplexity evaluation
                 if pd.isna(ppl_table.loc[(sparsity_type, method), model_name]):
@@ -243,7 +249,11 @@ def main():
                     if "30b" in model_name or "65b" in model_name or "70b" in model_name:
                         accelerate = True
 
-                    results = eval_zero_shot(model_name, model, tokenizer, task_list, 0, accelerate, 8)
+                    try:
+                        results = eval_zero_shot(model_name, model, tokenizer, task_list, 0, accelerate, 8)
+                    except:  # in case when the model is too large for this GPUs
+                        continue
+
                     name_to_acc = {task: data['acc,none'] * 100 for task, data in results['results'].items()}
                     average_score = sum(name_to_acc.values()) / len(name_to_acc)
 
