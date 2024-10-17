@@ -81,7 +81,7 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
 
 
 def eval_zero_shot(model_name, model, tokenizer, task_list=None,
-                   num_fewshot=0, use_accelerate=False):
+                   num_fewshot=0, use_accelerate=False, batch_size=8):
     if task_list is None:
         task_list = ['winogrande', 'openbookqa', 'boolq', 'piqa', 'hellaswag', 'arc_easy', 'arc_challenge']
 
@@ -111,7 +111,7 @@ def eval_zero_shot(model_name, model, tokenizer, task_list=None,
     lm = HFLM(
         pretrained=model,
         tokenizer=tokenizer,
-        batch_size=8,
+        batch_size=batch_size,
         device="cuda" if torch.cuda.is_available() else "cpu",
         backend="causal"
     )
