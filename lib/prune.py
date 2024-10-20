@@ -148,7 +148,7 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
             inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
-            if hasattr(kwargs, 'position_ids'):
+            if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
     blocks[0] = Catcher(blocks[0])
@@ -230,7 +230,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         with torch.no_grad():
             for j in range(args.nsamples):
-                if position_ids:
+                if position_ids is not None:
                     block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
                 else:
                     block(inps[j].unsqueeze(0), attention_mask=attention_mask)
@@ -260,7 +260,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         with torch.no_grad():
             for j in range(args.nsamples):
-                if position_ids:
+                if position_ids is not None:
                     outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
                 else:
                     outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
@@ -298,7 +298,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             inps[cache['i']] = inp
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
-            if hasattr(kwargs, 'position_ids'):
+            if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
     blocks[0] = Catcher(blocks[0])
@@ -344,7 +344,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            if position_ids:
+            if position_ids is not None:
                 block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
             else:
                 block(inps[j].unsqueeze(0), attention_mask=attention_mask)
@@ -363,7 +363,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
-            if position_ids:
+            if position_ids is not None:
                 outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
             else:
                 outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
@@ -411,7 +411,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             inps[cache['i']] = inp
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
-            if hasattr(kwargs, 'position_ids'):
+            if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
 
@@ -460,7 +460,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            if position_ids:
+            if position_ids is not None:
                 block(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
             else:
                 block(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask)
@@ -487,7 +487,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
         print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
-            if position_ids:
+            if position_ids is not None:
                 outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
             else:
                 outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]

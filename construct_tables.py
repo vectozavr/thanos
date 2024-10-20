@@ -2,6 +2,7 @@ import argparse
 import os
 import pickle
 import random
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -167,6 +168,7 @@ def main():
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument("--eval_zero_shot", default=True, type=bool)
+    parser.add_argument("--clear_cache", default=False, type=bool)
     args = parser.parse_args()
 
     args.sparsity_ratio = 0.5
@@ -186,6 +188,9 @@ def main():
     if ppl_table is None:
         ppl_table = create_initial_ppl_table()
 
+    if args.clear_cache:
+        shutil.rmtree(args.cache_dir, ignore_errors=True)
+
     if args.eval_zero_shot:
         eval_table = load_table("eval_table")
         eval_avg_table = load_table("eval_avg_table")
@@ -204,6 +209,9 @@ def main():
                 # Check if we already have a computed values for this entries in tables:
                 if pd.notna(ppl_table.loc[(sparsity_type, method), model_name]) and (not args.eval_zero_shot or pd.notna(eval_avg_table.loc[(sparsity_type, method), model_name])):
                     continue
+
+                if args.clear_cache:
+                    shutil.rmtree(args.cache_dir, ignore_errors=True)
 
                 try:
                     model = get_llm(model_name, args.cache_dir)
