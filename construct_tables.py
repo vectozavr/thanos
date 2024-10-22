@@ -217,7 +217,8 @@ def main():
                     model = get_llm(model_name, args.cache_dir)
                     model.eval()
                     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
-                except:  # in case when the model is too large for this GPUs
+                except Exception as e:  # in case when the model is too large for this GPUs
+                    print(f"Caught exception: {e}")
                     continue
 
                 device = torch.device("cuda:0")
@@ -237,7 +238,8 @@ def main():
                             prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
                         case _:
                             pass
-                except:  # in case when the model is too large for this GPUs
+                except Exception as e:  # in case when the model is too large for this GPUs
+                    print(f"Caught exception: {e}")
                     continue
 
                 # Perplexity evaluation
@@ -259,7 +261,8 @@ def main():
 
                     try:
                         results = eval_zero_shot(model_name, model, tokenizer, task_list, 0, accelerate, 8)
-                    except:  # in case when the model is too large for this GPUs
+                    except Exception as e:  # in case when the model is too large for this GPUs
+                        print(f"Caught exception: {e}")
                         continue
 
                     name_to_acc = {task: data['acc,none'] * 100 for task, data in results['results'].items()}
