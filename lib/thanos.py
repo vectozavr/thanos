@@ -290,6 +290,7 @@ class Thanos:
 
         # Wanda metric
         tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
+
         mask = structured_n_m_sparsity_mask(tmp, prune_n, prune_m)
 
         indices = torch.arange(0, blocksize, device=self.dev).unsqueeze(0).repeat(self.rows, 1)
