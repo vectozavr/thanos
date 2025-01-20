@@ -147,6 +147,7 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
             inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
+            cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
@@ -161,9 +162,11 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
     outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
     position_ids = cache['position_ids']
+    position_embeddings = cache['position_embeddings']
+
     model.config.use_cache = use_cache
 
-    return inps, outs, attention_mask, position_ids
+    return inps, outs, attention_mask, position_ids, position_embeddings
 
 
 def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0, structured=False):
@@ -204,7 +207,15 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
     dataloader, _ = get_loaders("c4", nsamples=args.nsamples, seed=args.seed, seqlen=model.seqlen, tokenizer=tokenizer)
     print("dataset loading complete")
     with torch.no_grad():
-        inps, outs, attention_mask, position_ids = prepare_calibration_input(model, dataloader, device, args.nsamples)
+        inps, outs, attention_mask, position_ids, position_embeddings = prepare_calibration_input(model, dataloader, device, args.nsamples)
+
+    block_args = {}
+    if attention_mask is not None:
+        block_args["attention_mask"] = attention_mask  # Add attention mask if defined
+    if position_ids is not None:
+        block_args["position_ids"] = position_ids  # Add position IDs if defined
+    if position_embeddings is not None:
+        block_args["position_embeddings"] = position_embeddings  # Add position embeddings if defined
 
     blocks = get_all_blocks(model)
 
@@ -235,10 +246,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         with torch.no_grad():
             for j in range(args.nsamples):
-                if position_ids is not None:
-                    block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
-                else:
-                    block(inps[j].unsqueeze(0), attention_mask=attention_mask)
+                block(inps[j].to(dev).unsqueeze(0), **block_args)
 
         for h in handles:
             h.remove()
@@ -271,10 +279,8 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         with torch.no_grad():
             for j in range(args.nsamples):
-                if position_ids is not None:
-                    outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-                else:
-                    outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
+                outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
+
         inps, outs = outs, inps
 
     model.config.use_cache = use_cache
@@ -309,6 +315,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
             inps[cache['i']] = inp
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
+            cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
@@ -324,6 +331,15 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
     outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
     position_ids = cache['position_ids']
+    position_embeddings = cache['position_embeddings']
+
+    block_args = {}
+    if attention_mask is not None:
+        block_args["attention_mask"] = attention_mask  # Add attention mask if defined
+    if position_ids is not None:
+        block_args["position_ids"] = position_ids  # Add position IDs if defined
+    if position_embeddings is not None:
+        block_args["position_embeddings"] = position_embeddings  # Add position embeddings if defined
 
     print('Ready.')
 
@@ -355,10 +371,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            if position_ids is not None:
-                block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
-            else:
-                block(inps[j].unsqueeze(0), attention_mask=attention_mask)
+            block(inps[j].to(dev).unsqueeze(0), **block_args)
 
         for h in handles:
             h.remove()
@@ -372,12 +385,9 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
 
             print(i, name)
 
-        #print("Recomputing the whole layers output...")
+        print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
-            if position_ids is not None:
-                outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-            else:
-                outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
+            outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
 
         blocks[i] = block
         torch.cuda.empty_cache()
@@ -412,7 +422,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
         (args.nsamples, min(2048, model.seqlen), model.config.hidden_size), dtype=dtype, device=dev
     )
 
-    cache = {'i': 0, 'attention_mask': None, "position_ids": None}
+    cache = {'i': 0, 'attention_mask': None, "position_ids": None, 'position_embeddings': None}
 
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -422,6 +432,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
             inps[cache['i']] = inp
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
+            cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
@@ -438,6 +449,15 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
     outs = torch.zeros_like(inps)
     attention_mask = cache['attention_mask']
     position_ids = cache['position_ids']
+    position_embeddings = cache['position_embeddings']
+
+    block_args = {}
+    if attention_mask is not None:
+        block_args["attention_mask"] = attention_mask  # Add attention mask if defined
+    if position_ids is not None:
+        block_args["position_ids"] = position_ids  # Add position IDs if defined
+    if position_embeddings is not None:
+        block_args["position_embeddings"] = position_embeddings  # Add position embeddings if defined
 
     print('Ready.')
 
@@ -471,10 +491,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
             handles.append(subset[name].register_forward_hook(add_batch(name)))
 
         for j in range(args.nsamples):
-            if position_ids is not None:
-                block(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)
-            else:
-                block(inps[j].to(dev).unsqueeze(0), attention_mask=attention_mask)
+            block(inps[j].to(dev).unsqueeze(0), **block_args)
 
         for h in handles:
             h.remove()
@@ -497,12 +514,9 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
 
             gpts[name].free()
 
-        #print("Recomputing the whole layers output...")
+        print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
-            if position_ids is not None:
-                outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
-            else:
-                outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask)[0]
+            outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
 
         blocks[i] = block
         torch.cuda.empty_cache()

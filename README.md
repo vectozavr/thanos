@@ -1,7 +1,8 @@
 # Thanos - Method of Pruning LLMs
 Official PyTorch implementation of **Thanos**, as presented in our paper:
 
-**The name of the paper will be here** </br>
+**Thanos: A Block-wise Pruning Algorithm for Efficient Large Language Model
+Compression** </br>
 *Ivan Ilin*<br>
 KAUST, AI Initiative<br>
 [Paper](link)
