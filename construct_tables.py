@@ -10,7 +10,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
-from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, check_sparsity
+from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt
 from lib.eval import eval_ppl, eval_zero_shot
 
 # In case you want to select particular GPUs
@@ -156,12 +156,11 @@ def load_table(filename, dir="out"):
 
 
 def main():
-    ppl_table = load_table("ppl_table")
-    eval_table = load_table("eval_table")
-    eval_avg_table = load_table("eval_avg_table")
+    #ppl_table = load_table("ppl_table")
+    #eval_table = load_table("eval_table")
+    #eval_avg_table = load_table("eval_avg_table")
+    #print_latex_table(eval_table)
 
-    a = 0
-    return 0
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
@@ -243,7 +242,7 @@ def main():
                     continue
 
                 # Perplexity evaluation
-                if pd.isna(ppl_table.loc[(sparsity_type, method), model_name]):
+                if args.recompute or pd.isna(ppl_table.loc[(sparsity_type, method), model_name]):
                     ppl_pruned = eval_ppl(args, model, tokenizer, device)
                     ppl_table.loc[(sparsity_type, method), model_name] = ppl_pruned
                     # Save intermediate state to CSV

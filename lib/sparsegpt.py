@@ -84,7 +84,7 @@ class SparseGPT:
 
 
     def fasterprune(
-        self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01
+        self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01, structured=False
     ):
         W = self.layer.weight.data.clone()
 
@@ -130,10 +130,20 @@ class SparseGPT:
             if prune_n == 0: 
                 if mask is not None:
                     mask1 = mask[:, i1:i2]
-                else:
+                elif not structured:
+                    # Unstructured
                     tmp = W1 ** 2 / (torch.diag(Hinv1).reshape((1, -1))) ** 2
                     thresh = torch.sort(tmp.flatten())[0][int(tmp.numel() * sparsity)]
                     mask1 = tmp <= thresh
+                else:
+                    # Structured
+                    tmp = W1 ** 2 / (torch.diag(Hinv1).reshape((1, -1))) ** 2
+                    tmp_mean = torch.mean(tmp, axis=0)
+                    values, indices = torch.topk(tmp_mean, int(sparsity * tmp.shape[1]), largest=False)
+
+                    mask1 = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)
+                    mask1[:, indices] = True
+
             else:
                 mask1 = torch.zeros_like(W1) == 1
 

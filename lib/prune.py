@@ -15,7 +15,6 @@ import sys
 # TODO: move this flag from here
 is_compute_l2 = False
 
-
 def plot_heatmap_full_sized(tensor, filename):
     """
     Save a square mask tensor as an RGB image.
@@ -167,7 +166,7 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
     return inps, outs, attention_mask, position_ids
 
 
-def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0, structured=False):
     blocks = get_all_blocks(model)
 
     for i in range(len(blocks)):
@@ -184,13 +183,19 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
                         tmp = W_metric[:,ii:(ii+prune_m)].float()
                         W_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
             else:
-                thresh = torch.sort(W_metric.flatten().cuda())[0][int(W.numel()*args.sparsity_ratio)].cpu()
-                W_mask = (W_metric<=thresh)
+                if not structured:
+                    # Unstructured
+                    thresh = torch.sort(W_metric.flatten().cuda())[0][int(W.numel()*args.sparsity_ratio)].cpu()
+                    W_mask = (W_metric<=thresh)
+                else:
+                    #Structured
+                    W_mask = (torch.zeros_like(W) == 1)
+                    W_mask[:, torch.topk(torch.mean(W_metric, dim=0), largest=False, k=int(W.shape[1]*args.sparsity_ratio)).indices] = True
 
             W[W_mask] = 0
 
 
-def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0, structured=False):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
@@ -249,12 +254,18 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                     if ii % prune_m == 0:
                         tmp = W_metric[:,ii:(ii+prune_m)].float()
                         W_mask.scatter_(1,ii+torch.topk(tmp, prune_n,dim=1, largest=False)[1], True)
-            else:
+            elif not structured:
                 sort_res = torch.sort(W_metric, dim=-1, stable=True)
 
                 # unstructured pruning
                 indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                 W_mask.scatter_(1, indices, True)
+            else:
+                glob_tmp_mean = torch.mean(W_metric, axis=0)
+                values, indices = torch.topk(glob_tmp_mean, int(args.sparsity_ratio * W_metric.shape[1]), largest=False)
+
+                W_mask = torch.zeros_like(W_metric, dtype=torch.bool, device=W_metric.device)
+                W_mask[:, indices] = True
 
             subset[name].weight.data[W_mask] = 0  # set weights to zero
 
@@ -271,7 +282,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
 
 @torch.no_grad()
-def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
+def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structured=False):
     ## SparseGPT code available at: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
     print('Starting ...')
     dataloader, _ = get_loaders("c4", args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
@@ -356,12 +367,12 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
             print('Pruning ...')
 
             name = gpt
-            gpts[name].fasterprune(args.sparsity_ratio, prune_n=prune_n, prune_m=prune_m, percdamp=0.01, blocksize=128)
+            gpts[name].fasterprune(args.sparsity_ratio, prune_n=prune_n, prune_m=prune_m, percdamp=0.01, blocksize=128, structured=structured)
             gpts[name].free()
 
             print(i, name)
 
-        print("Recomputing the whole layers output...")
+        #print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
             if position_ids is not None:
                 outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
@@ -378,7 +389,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
 
 @torch.no_grad()
-def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
+def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=256, v_blocksize=256, structured=False):
     print('Starting ...')
 
     dataloader, _ = get_loaders("c4",
@@ -476,16 +487,17 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
                             prune_n=prune_n,
                             prune_m=prune_m,
                             percdamp=0.01,
-                            blocksize=1024,
-                            v_blocksize=128,
-                            adaptive_blocksize=False)
+                            blocksize=blocksize,
+                            v_blocksize=v_blocksize,
+                            adaptive_blocksize=False,
+                            structured=structured)
 
             if gpts[name].l2_loss is not None:
                 average_l2_loss += gpts[name].l2_loss / len(gpts)
 
             gpts[name].free()
 
-        print("Recomputing the whole layers output...")
+        #print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
             if position_ids is not None:
                 outs[j] = block(inps[j].unsqueeze(0), attention_mask=attention_mask, position_ids=position_ids)[0]
@@ -499,7 +511,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0):
 
     if average_l2_loss != 0:
         average_l2_loss /= len(blocks)
-        print("Average L2 loss =", average_l2_loss)
+        #print("Average L2 loss =", average_l2_loss)
 
     model.config.use_cache = use_cache
     torch.cuda.empty_cache()
+

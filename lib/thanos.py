@@ -88,10 +88,6 @@ class Thanos:
 
     # Similar to SparseGPT but with dynamic mask + Wanda metric
     def snap_bs_one(self, sparsity, prune_n=0, prune_m=0, groupsize=128, percdamp=.01):
-        # if blocksize == 1:
-        #    # return self.snap_bs_one_magnitude_based(sparsity, prune_n, prune_m, percdamp)
-        #    return self.snap_bs_one(sparsity, prune_n, prune_m, percdamp)
-
         W = self.layer.weight.data.clone()
 
         if hasattr(self, 'X'):
@@ -132,13 +128,6 @@ class Thanos:
             const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
             const_mask.view(-1)[indices] = True
 
-            # Global Wanda mask
-            # glob_tmp = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
-            # sort_res = torch.sort(glob_tmp, dim=-1, stable=True)
-            # indices = sort_res[1][:, :int(glob_tmp.shape[1] * sparsity)]
-            # const_mask = torch.zeros_like(W, dtype=torch.bool, device=self.dev)
-            # const_mask.scatter_(1, indices, True)
-
         # Subsequent pruning
         for i1 in range(0, self.columns, groupsize):
             i2 = min(i1 + groupsize, self.columns)
@@ -147,10 +136,9 @@ class Thanos:
             if use_constant_mask:
                 block_mask = const_mask[:, i1:i2]
             else:
-
                 local_block_sparsity = False
 
-                if not local_block_sparsity:
+                if prune_n == 0 and not local_block_sparsity:
                     glob_tmp = torch.abs(W[:, i1:]) * torch.sqrt(self.scaler_row[i1:]).reshape((1, -1))
                     estimate_zeros = int(sparsity * self.rows * self.columns - zeros)
                     values, indices = torch.topk(glob_tmp.flatten(), estimate_zeros, largest=False)
@@ -158,22 +146,44 @@ class Thanos:
                     glob_mask.view(-1)[indices] = True
                     block_mask = glob_mask[:, :groupsize]
                     zeros += torch.sum(block_mask)
-                else:
+                elif prune_n == 0:
                     loc_tmp = torch.abs(W[:, i1:i2]) * torch.sqrt(self.scaler_row[i1:i2]).reshape((1, -1))
                     values, indices = torch.topk(loc_tmp.flatten(), int(loc_tmp.numel()*sparsity), largest=False)
                     loc_mask = torch.zeros_like(W[:, i1:i2], dtype=torch.bool, device=self.dev)
                     loc_mask.view(-1)[indices] = True
                     block_mask = loc_mask
+                else:
+                    loc_tmp = torch.abs(W[:, i1:i2]) * torch.sqrt(self.scaler_row[i1:i2]).reshape((1, -1))
+                    block_mask = structured_n_m_sparsity_mask(loc_tmp, prune_n, prune_m)
 
-            if prune_n == 0:  # unstructured sparsity
-                W_block = W[:, i1:i2]
-                Err = block_mask * W_block / torch.diag(Hinv[i1:i2, i1:i2])
-                W[:, i1:i2][block_mask] = 0
-                W[:, i2:] -= Err.matmul(Hinv[i1:i2, i2:])
+            # Fast version:
+            W_block = W[:, i1:i2]
+            Err = block_mask * W_block / torch.diag(Hinv[i1:i2, i1:i2])
+            W[:, i1:i2][block_mask] = 0
+            W[:, i2:] -= Err.matmul(Hinv[i1:i2, i2:])
 
-            else:  # structured n:m sparsity
-                # TODO: implement structured n:m sparsity
-                pass
+            '''
+            W1 = W[:, i1:i2].clone()
+            Q1 = torch.zeros_like(W1)
+            Err1 = torch.zeros_like(W1)
+            Hinv1 = Hinv[i1:i2, i1:i2]
+
+            for i in range(groupsize):
+                w = W1[:, i]
+                d = Hinv1[i, i]
+
+                q = w.clone()
+                q[block_mask[:, i]] = 0
+
+                Q1[:, i] = q
+
+                err1 = (w - q) / d
+                W1[:, i:] -= err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
+                Err1[:, i] = err1
+
+            W[:, i1:i2] = Q1
+            W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
+            '''
 
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):
@@ -182,7 +192,7 @@ class Thanos:
 
         if hasattr(self, 'X'):
             self.l2_loss = compute_l2_loss(W - W_old, self.X)
-            print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
+            #print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
     def __unstructured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize, const_mask=None):
         W1 = W[:, i1:i2]
@@ -284,7 +294,7 @@ class Thanos:
         return new_zeros
 
     # The code for this function is much easier to comprehend because here we do not need to pad indices and R_hat
-    def __structured(self, W, Hinv, i1, i2, prune_n, prune_m, v_blocksize):
+    def __structured_n_m(self, W, Hinv, i1, i2, prune_n, prune_m, v_blocksize):
         W1 = W[:, i1:i2]
         blocksize = i2 - i1
 
@@ -297,12 +307,18 @@ class Thanos:
         indices_to_remove = indices[mask].reshape(self.rows, -1)
 
         b = W1[mask].reshape(self.rows, -1)
-        for r in range(self.rows // v_blocksize):
+
+        for r in range(self.rows // v_blocksize + 1):
             r1 = r * v_blocksize
+            if r1 > self.rows:
+                continue
+
             r2 = min(r1 + v_blocksize, self.rows)
 
+            v_current_block = min(self.rows - r1, v_blocksize)
+
             R = Hinv[indices_to_remove[r1:r2]].transpose(1, 2)
-            batch_indices = torch.arange(v_blocksize).view(-1, 1).expand(-1, blocksize // 2)
+            batch_indices = torch.arange(v_current_block).view(-1, 1).expand(-1, blocksize // 2)
             R_hat = R[batch_indices, indices_to_remove[r1:r2]]
 
             lambdas = torch.linalg.solve(R_hat, b[r1:r2]).unsqueeze(2)
@@ -311,7 +327,48 @@ class Thanos:
 
         W1[mask] = 0
 
-    def snap(self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01, v_blocksize=64, adaptive_blocksize=False):
+    def __structured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize):
+        W1 = W[:, i1:i2]
+        blocksize = i2 - i1
+
+        # 1191.9130859375
+
+        # Wanda metric
+        local_W = W[:, i1:]
+        glob_tmp = torch.abs(local_W) * torch.sqrt(self.scaler_row[i1:]).reshape((1, -1))
+        glob_tmp_mean = torch.mean(glob_tmp, axis=0)
+
+        estimate_zeros = int(sparsity * self.columns - zeros)
+
+        # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
+        # because it will produce the same number of non-zero elements
+        values, indices = torch.topk(glob_tmp_mean, estimate_zeros, largest=False)
+
+        glob_mask = torch.zeros_like(local_W[0], dtype=torch.bool, device=self.dev)
+        glob_mask[indices] = True
+
+        mask = glob_mask[:blocksize]
+        new_zeros = torch.sum(mask)
+
+        indices = torch.arange(0, blocksize, device=self.dev)
+        indices_to_remove = indices[mask]
+
+        R = Hinv[indices_to_remove]
+        R_hat = R[:, indices_to_remove]
+        R_hat_inv = torch.inverse(R_hat)
+        R_hat_inv_R_mult = R_hat_inv@R
+        U = W1[:, indices_to_remove]
+
+        dW = -U@R_hat_inv_R_mult
+
+        W[:, i1:] += dW
+
+        W1[:, indices_to_remove] = 0
+
+        return new_zeros
+
+    def snap(self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01, v_blocksize=64,
+             adaptive_blocksize=False, structured=False):
         if blocksize == 1:
            return self.snap_bs_one(sparsity=sparsity,
                                    prune_n=prune_n,
@@ -365,11 +422,12 @@ class Thanos:
         for i1 in range(0, self.columns, blocksize):
             i2 = min(i1 + blocksize, self.columns)
 
-            if prune_n == 0:  # unstructured
+            if prune_n == 0 and not structured:  # unstructured
                 zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize, const_mask)
-            else:  # structured n:m sparsity
-                self.__structured(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
-
+            elif prune_n != 0:  # structured n:m sparsity
+                self.__structured_n_m(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
+            else:
+                zeros += self.__structured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
             Hinv = torch.linalg.inv(H[i2:, i2:])
 
         print('Layer pruning time %.2f' % (time.time() - tick))
@@ -382,7 +440,7 @@ class Thanos:
 
         if hasattr(self, 'X'):
             self.l2_loss = compute_l2_loss(W - W_old, self.X)
-            print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
+            #print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
 
 
 
