@@ -138,7 +138,7 @@ class SparseGPT:
                 else:
                     # Structured
                     tmp = W1 ** 2 / (torch.diag(Hinv1).reshape((1, -1))) ** 2
-                    tmp_mean = torch.mean(tmp, axis=0)
+                    tmp_mean = torch.mean(tmp, dim=0)
                     values, indices = torch.topk(tmp_mean, int(sparsity * tmp.shape[1]), largest=False)
 
                     mask1 = torch.zeros_like(tmp, dtype=torch.bool, device=self.dev)

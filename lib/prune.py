@@ -137,7 +137,7 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
     inps = torch.zeros((nsamples, min(2048, model.seqlen), model.config.hidden_size), dtype=dtype, device=device)
 
     inps.requires_grad = False
-    cache = {'i': 0, 'attention_mask': None, "position_ids": None}
+    cache = {'i': 0, 'attention_mask': None, "position_ids": None, 'position_embeddings': None}
 
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -147,7 +147,8 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
             inps[cache['i']] = inp.reshape((-1, inp.shape[-1])).to(torch.device("cpu"))
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
-            cache['position_embeddings'] = kwargs['position_embeddings']
+            if 'position_embeddings' in kwargs:
+                cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
@@ -305,7 +306,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
     inps = torch.zeros(
         (args.nsamples, min(2048, model.seqlen), model.config.hidden_size), dtype=dtype, device=dev
     )
-    cache = {'i': 0, 'attention_mask': None, "position_ids": None}
+    cache = {'i': 0, 'attention_mask': None, "position_ids": None, 'position_embeddings': None}
 
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -315,7 +316,8 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
             inps[cache['i']] = inp
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
-            cache['position_embeddings'] = kwargs['position_embeddings']
+            if 'position_embeddings' in kwargs:
+                cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError
@@ -432,7 +434,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
             inps[cache['i']] = inp
             cache['i'] += 1
             cache['attention_mask'] = kwargs['attention_mask']
-            cache['position_embeddings'] = kwargs['position_embeddings']
+            if 'position_embeddings' in kwargs:
+                cache['position_embeddings'] = kwargs['position_embeddings']
             if 'position_ids' in kwargs:
                 cache['position_ids'] = kwargs['position_ids']
             raise ValueError

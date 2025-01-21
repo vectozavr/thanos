@@ -331,12 +331,10 @@ class Thanos:
         W1 = W[:, i1:i2]
         blocksize = i2 - i1
 
-        # 1191.9130859375
-
         # Wanda metric
         local_W = W[:, i1:]
         glob_tmp = torch.abs(local_W) * torch.sqrt(self.scaler_row[i1:]).reshape((1, -1))
-        glob_tmp_mean = torch.mean(glob_tmp, axis=0)
+        glob_tmp_mean = torch.mean(glob_tmp, dim=0)
 
         estimate_zeros = int(sparsity * self.columns - zeros)
 
@@ -402,6 +400,24 @@ class Thanos:
         diag = torch.arange(self.columns, device=self.dev)
         H[diag, diag] += damp
 
+        if structured:
+            # Permutation based on the mean value of the Wanda metric (we place parameters for removal to be the first)
+            glob_metric = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
+            glob_metric_mean = torch.mean(glob_metric, dim=0)
+            values, indices = torch.topk(glob_metric_mean, int(sparsity * self.columns), largest=False)
+
+            indices = torch.flip(indices, dims=[0])
+            all_indices = torch.arange(self.columns, device=indices.device)
+            _mask = torch.ones(self.columns, dtype=torch.bool, device=indices.device)
+            _mask[indices] = False
+            residual_indices = all_indices[_mask]
+
+            perm = torch.cat([indices, residual_indices])
+            invperm = torch.sort(perm).indices
+            H = (H[:, perm])[perm, :]
+            W = W[:, perm]
+            self.scaler_row = self.scaler_row[perm]
+
         Hinv = torch.linalg.inv(H)
 
         zeros = 0
@@ -432,6 +448,10 @@ class Thanos:
 
         print('Layer pruning time %.2f' % (time.time() - tick))
         #print('Sparsity: ', torch.sum(W == 0.0).item() / (self.rows * self.columns))
+
+        if structured:
+            # Make the inverse permutation
+            W = W[:, invperm]
 
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):

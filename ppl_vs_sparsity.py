@@ -43,7 +43,7 @@ def get_llm(model_name, cache_dir="llm_weights"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Meta-Llama-3-8B")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-13b-hf")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     args = parser.parse_args()
@@ -59,11 +59,11 @@ def main():
     torch.random.manual_seed(args.seed)
 
     start = 0.0
-    final = 0.5
-    step = 0.025
+    final = 0.3
+    step = 0.01
 
     sparsities = torch.arange(start, final + step, step)
-    methods = ['Wanda', 'SparseGPT', 'Thanos']
+    methods = ['Magnitude', 'Wanda', 'SparseGPT', 'Thanos']
     structured = True
 
     ppls = {}
@@ -86,15 +86,19 @@ def main():
 
             print("Pruning of " + args.model + " by " + method + " with sparsity = " + str(sparsity))
 
-            match method:
-                case 'SparseGPT':
-                    prune_sparsegpt(args, model, tokenizer, device, structured=structured)
-                case 'Wanda':
-                    prune_wanda(args, model, tokenizer, device, structured=structured)
-                case 'Thanos':
-                    prune_thanos(args, model, tokenizer, device, structured=structured, blocksize=512, v_blocksize=256)
-                case _:
-                    pass
+            if sparsity > 0:
+                match method:
+                    case 'SparseGPT':
+                        prune_sparsegpt(args, model, tokenizer, device, structured=structured)
+                    case 'Wanda':
+                        prune_wanda(args, model, tokenizer, device, structured=structured)
+                    case 'Thanos':
+                        prune_thanos(args, model, tokenizer, device, structured=structured,
+                                     blocksize=512, v_blocksize=256)
+                    case 'Magnitude':
+                        prune_magnitude(args, model, tokenizer, device, structured=structured)
+                    case _:
+                        pass
 
             ppl_test = eval_ppl(args, model, tokenizer, device)
             ppls[method][i] = ppl_test

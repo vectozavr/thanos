@@ -4,13 +4,13 @@ Official PyTorch implementation of **Thanos**, as presented in our paper:
 **Thanos: A Block-wise Pruning Algorithm for Efficient Large Language Model
 Compression** </br>
 *Ivan Ilin*<br>
-KAUST, AI Initiative<br>
+GenAI Center of Excellence, King Abdullah University of Science and Technology, Thuwal, Saudi Arabia<br>
 [Paper](link)
 
 ```bibtex
 @article{ilin2024thanos,
   title={The name of the paper will be here}, 
-  author={Ivan Ilin},
+  author={Ivan Ilin, Peter Richtarik},
   year={2024},
   journal={arXiv preprint arXiv:}
 }
