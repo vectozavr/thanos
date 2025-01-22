@@ -75,17 +75,13 @@ def main():
     # facebook/opt-66b
     # facebook/opt-175b
 
-    # Thanos:    30.24
-    # Thanos+:   29.97
-    # SparseGPT: 35.28
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-3.2-1B")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
-    parser.add_argument('--sparsity_ratio', type=float, default=0.2, help='Sparsity level')
+    parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "structured", "4:8", "2:4"], default="structured")
-    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="sparsegpt")
+    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')

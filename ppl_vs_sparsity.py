@@ -63,7 +63,7 @@ def main():
     step = 0.01
 
     sparsities = torch.arange(start, final + step, step)
-    methods = ['Magnitude', 'Wanda', 'SparseGPT', 'Thanos']
+    methods = ['Thanos']
     structured = True
 
     ppls = {}

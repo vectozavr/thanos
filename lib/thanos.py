@@ -1,9 +1,29 @@
 import math
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import transformers
+import matplotlib.pyplot as plt
+
+
+def plot_heatmap(tensor, filename, title=None):
+    vmin, vmax = np.percentile(tensor.cpu().numpy(), [0, 98])
+
+    m, n = tensor.shape
+
+    plt.figure(figsize=(8, 8), dpi=100)
+    plt.imshow(tensor.cpu().numpy(), cmap='viridis', vmin=vmin, vmax=vmax, extent=[0, n, 0, m])
+    plt.colorbar(label='Values')
+    plt.title(title)
+    plt.xlabel('Columns')
+    plt.ylabel('Rows')
+
+    plt.tight_layout(pad=0)
+
+    plt.savefig(filename, format='pdf', dpi=100)
+    plt.close()
 
 
 def l2_loss(dW, Xj):
@@ -327,7 +347,7 @@ class Thanos:
 
         W1[mask] = 0
 
-    def __structured(self, W, Hinv, i1, i2, zeros, sparsity, v_blocksize):
+    def __structured(self, W, Hinv, i1, i2, zeros, sparsity):
         W1 = W[:, i1:i2]
         blocksize = i2 - i1
 
@@ -336,7 +356,10 @@ class Thanos:
         glob_tmp = torch.abs(local_W) * torch.sqrt(self.scaler_row[i1:]).reshape((1, -1))
         glob_tmp_mean = torch.mean(glob_tmp, dim=0)
 
-        estimate_zeros = int(sparsity * self.columns - zeros)
+        estimate_zeros = int(sparsity * self.columns) - zeros
+
+        if estimate_zeros == 0:
+            return 0
 
         # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
         # because it will produce the same number of non-zero elements
@@ -361,7 +384,7 @@ class Thanos:
 
         W[:, i1:] += dW
 
-        W1[:, indices_to_remove] = 0
+        W1[:, indices_to_remove] = 0.0
 
         return new_zeros
 
@@ -401,10 +424,20 @@ class Thanos:
         H[diag, diag] += damp
 
         if structured:
+            # TODO: move this flag from here to the argument
+            perc_outliers = 0.1
+            num_outliers = int(perc_outliers*self.rows)
+
             # Permutation based on the mean value of the Wanda metric (we place parameters for removal to be the first)
             glob_metric = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
             glob_metric_mean = torch.mean(glob_metric, dim=0)
             values, indices = torch.topk(glob_metric_mean, int(sparsity * self.columns), largest=False)
+
+            #plot_heatmap(glob_metric, "heat_map_initial.pdf")
+
+            glob_metric_rows_mean = torch.mean(glob_metric, dim=1)
+            row_perm = torch.sort(glob_metric_rows_mean).indices
+            inv_row_perm = torch.sort(row_perm).indices
 
             indices = torch.flip(indices, dims=[0])
             all_indices = torch.arange(self.columns, device=indices.device)
@@ -412,11 +445,14 @@ class Thanos:
             _mask[indices] = False
             residual_indices = all_indices[_mask]
 
-            perm = torch.cat([indices, residual_indices])
-            invperm = torch.sort(perm).indices
-            H = (H[:, perm])[perm, :]
-            W = W[:, perm]
-            self.scaler_row = self.scaler_row[perm]
+            col_perm = torch.cat([indices, residual_indices])
+            inv_col_perm = torch.sort(col_perm).indices
+            H = (H[:, col_perm])[col_perm, :]
+            W = (W[row_perm, :])[:, col_perm]
+            self.scaler_row = self.scaler_row[col_perm]
+
+            #plot_heatmap(glob_metric[:, col_perm], "heat_map_col_perm.pdf")
+            #plot_heatmap((glob_metric[:, col_perm])[row_perm, :], "heat_map_col_row_perm.pdf")
 
         Hinv = torch.linalg.inv(H)
 
@@ -443,7 +479,8 @@ class Thanos:
             elif prune_n != 0:  # structured n:m sparsity
                 self.__structured_n_m(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
             else:
-                zeros += self.__structured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize)
+                pruned_part_W = W[:-num_outliers]
+                zeros += self.__structured(pruned_part_W, Hinv, i1, i2, zeros, sparsity)
             Hinv = torch.linalg.inv(H[i2:, i2:])
 
         print('Layer pruning time %.2f' % (time.time() - tick))
@@ -451,7 +488,7 @@ class Thanos:
 
         if structured:
             # Make the inverse permutation
-            W = W[:, invperm]
+            W = (W[inv_row_perm, :])[:, inv_col_perm]
 
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):
@@ -461,8 +498,6 @@ class Thanos:
         if hasattr(self, 'X'):
             self.l2_loss = compute_l2_loss(W - W_old, self.X)
             #print("Summ(|dW X_j|^2_1,2) =", self.l2_loss)
-
-
 
     def free(self):
         self.H = None
