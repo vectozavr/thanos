@@ -401,7 +401,7 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
 
 
 @torch.no_grad()
-def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=256, v_blocksize=256, structured=False):
+def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=256, v_blocksize=256, structured=False, perc_outliers=0.1):
     print('Starting ...')
 
     dataloader, _ = get_loaders("c4",
@@ -501,6 +501,7 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
 
         for name in gpts:
             print(i, name)
+
             print('Pruning ...')
 
             gpts[name].snap(args.sparsity_ratio,
@@ -510,7 +511,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
                             blocksize=blocksize,
                             v_blocksize=v_blocksize,
                             adaptive_blocksize=False,
-                            structured=structured)
+                            structured=structured,
+                            perc_outliers=perc_outliers)
 
             if gpts[name].l2_loss is not None:
                 average_l2_loss += gpts[name].l2_loss / len(gpts)

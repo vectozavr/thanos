@@ -347,49 +347,69 @@ class Thanos:
 
         W1[mask] = 0
 
-    def __structured(self, W, Hinv, i1, i2, zeros, sparsity):
-        W1 = W[:, i1:i2]
-        blocksize = i2 - i1
+    def __structured(self, W, sparsity, percdamp=.01, perc_outliers=0.1):
+        if isinstance(self.layer, nn.Conv2d):
+            W = W.flatten(1)
+        if isinstance(self.layer, transformers.Conv1D):
+            W = W.t()
+        W = W.float()
 
-        # Wanda metric
-        local_W = W[:, i1:]
-        glob_tmp = torch.abs(local_W) * torch.sqrt(self.scaler_row[i1:]).reshape((1, -1))
-        glob_tmp_mean = torch.mean(glob_tmp, dim=0)
+        tick = time.time()
 
-        estimate_zeros = int(sparsity * self.columns) - zeros
+        H = self.H
+        del self.H
+        dead = torch.diag(H) == 0
+        H[dead, dead] = 1
+        W[:, dead] = 0
 
-        if estimate_zeros == 0:
-            return 0
+        damp = percdamp * torch.mean(torch.diag(H))
+        diag = torch.arange(self.columns, device=self.dev)
+        H[diag, diag] += damp
 
-        # This method of mask construction is more robust (comparison to sparseGPT and Wanda)
-        # because it will produce the same number of non-zero elements
-        values, indices = torch.topk(glob_tmp_mean, estimate_zeros, largest=False)
+        num_outliers = int(perc_outliers * self.rows)
+        # Permutation based on the mean value of the Wanda metric (we place parameters for removal to be the first)
+        glob_metric = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
 
-        glob_mask = torch.zeros_like(local_W[0], dtype=torch.bool, device=self.dev)
-        glob_mask[indices] = True
+        #plot_heatmap(glob_metric, "heat_map_initial.pdf")
 
-        mask = glob_mask[:blocksize]
-        new_zeros = torch.sum(mask)
+        glob_metric_cols_mean = torch.mean(glob_metric, dim=0)
+        col_perm = torch.sort(glob_metric_cols_mean).indices
+        inv_col_perm = torch.sort(col_perm).indices
 
-        indices = torch.arange(0, blocksize, device=self.dev)
-        indices_to_remove = indices[mask]
+        glob_metric_rows_mean = torch.mean(glob_metric, dim=1)
+        row_perm = torch.sort(glob_metric_rows_mean).indices
+        inv_row_perm = torch.sort(row_perm).indices
 
-        R = Hinv[indices_to_remove]
-        R_hat = R[:, indices_to_remove]
-        R_hat_inv = torch.inverse(R_hat)
-        R_hat_inv_R_mult = R_hat_inv@R
-        U = W1[:, indices_to_remove]
+        H = (H[:, col_perm])[col_perm, :]
+        W = (W[row_perm, :])[:, col_perm]
+        self.scaler_row = self.scaler_row[col_perm]
 
-        dW = -U@R_hat_inv_R_mult
+        Hinv = torch.linalg.inv(H)
 
-        W[:, i1:] += dW
+        blocksize = math.ceil(sparsity * self.columns/(1.0-perc_outliers))
 
-        W1[:, indices_to_remove] = 0.0
+        #plot_heatmap(glob_metric[:, col_perm], "heat_map_col_perm.pdf")
+        #plot_heatmap((glob_metric[:, col_perm])[row_perm, :], "heat_map_col_row_perm.pdf")
 
-        return new_zeros
+        non_outlier_W = W[:-(num_outliers+1)]
+        dW = -non_outlier_W[:, :blocksize] @ torch.linalg.inv(Hinv[:blocksize, :blocksize]) @ Hinv[:blocksize]
+
+        non_outlier_W += dW
+        non_outlier_W[:, :blocksize] = 0.0
+
+        # Make the inverse permutation
+        W = (W[inv_row_perm, :])[:, inv_col_perm]
+
+        print('Layer pruning time %.2f' % (time.time() - tick))
+
+        torch.cuda.synchronize()
+        if isinstance(self.layer, transformers.Conv1D):
+            W = W.t()
+        self.layer.weight.data = W.reshape(self.layer.weight.shape).to(self.layer.weight.data.dtype)
+
 
     def snap(self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=.01, v_blocksize=64,
-             adaptive_blocksize=False, structured=False):
+             adaptive_blocksize=False, structured=False, perc_outliers=0.1):
         if blocksize == 1:
            return self.snap_bs_one(sparsity=sparsity,
                                    prune_n=prune_n,
@@ -398,6 +418,10 @@ class Thanos:
                                    percdamp=percdamp)
 
         W = self.layer.weight.data.clone()
+
+        if structured:
+            self.__structured(W, sparsity, percdamp, perc_outliers)
+            return
 
         if hasattr(self, 'X'):
             W_old = W.clone()
@@ -423,37 +447,6 @@ class Thanos:
         diag = torch.arange(self.columns, device=self.dev)
         H[diag, diag] += damp
 
-        if structured:
-            # TODO: move this flag from here to the argument
-            perc_outliers = 0.1
-            num_outliers = int(perc_outliers*self.rows)
-
-            # Permutation based on the mean value of the Wanda metric (we place parameters for removal to be the first)
-            glob_metric = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
-            glob_metric_mean = torch.mean(glob_metric, dim=0)
-            values, indices = torch.topk(glob_metric_mean, int(sparsity * self.columns), largest=False)
-
-            #plot_heatmap(glob_metric, "heat_map_initial.pdf")
-
-            glob_metric_rows_mean = torch.mean(glob_metric, dim=1)
-            row_perm = torch.sort(glob_metric_rows_mean).indices
-            inv_row_perm = torch.sort(row_perm).indices
-
-            indices = torch.flip(indices, dims=[0])
-            all_indices = torch.arange(self.columns, device=indices.device)
-            _mask = torch.ones(self.columns, dtype=torch.bool, device=indices.device)
-            _mask[indices] = False
-            residual_indices = all_indices[_mask]
-
-            col_perm = torch.cat([indices, residual_indices])
-            inv_col_perm = torch.sort(col_perm).indices
-            H = (H[:, col_perm])[col_perm, :]
-            W = (W[row_perm, :])[:, col_perm]
-            self.scaler_row = self.scaler_row[col_perm]
-
-            #plot_heatmap(glob_metric[:, col_perm], "heat_map_col_perm.pdf")
-            #plot_heatmap((glob_metric[:, col_perm])[row_perm, :], "heat_map_col_row_perm.pdf")
-
         Hinv = torch.linalg.inv(H)
 
         zeros = 0
@@ -478,17 +471,10 @@ class Thanos:
                 zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize, const_mask)
             elif prune_n != 0:  # structured n:m sparsity
                 self.__structured_n_m(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
-            else:
-                pruned_part_W = W[:-num_outliers]
-                zeros += self.__structured(pruned_part_W, Hinv, i1, i2, zeros, sparsity)
             Hinv = torch.linalg.inv(H[i2:, i2:])
 
         print('Layer pruning time %.2f' % (time.time() - tick))
         #print('Sparsity: ', torch.sum(W == 0.0).item() / (self.rows * self.columns))
-
-        if structured:
-            # Make the inverse permutation
-            W = (W[inv_row_perm, :])[:, inv_col_perm]
 
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):

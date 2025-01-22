@@ -75,8 +75,11 @@ def main():
     # facebook/opt-66b
     # facebook/opt-175b
 
+    # Thanos llama2-7b 10%    - 8.49
+    # SparceGPT llama2-7b 10% - 10.35
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-3.2-1B")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-70b-hf")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
@@ -125,7 +128,7 @@ def main():
             prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
         elif args.prune_method == "thanos":
             prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m,
-                         blocksize=512, v_blocksize=256, structured=structured)
+                         blocksize=512, v_blocksize=256, structured=structured, perc_outliers=0.1)
 
         print(args.prune_method + ' time %.2f' % (time.time() - tick))
 
