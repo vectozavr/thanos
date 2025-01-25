@@ -75,21 +75,21 @@ def main():
     # facebook/opt-66b
     # facebook/opt-175b
 
-    # Thanos llama2-7b 10%    - 8.49
-    # SparceGPT llama2-7b 10% - 10.35
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-70b-hf")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-350m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.5, help='Sparsity level')
-    parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "structured", "4:8", "2:4"], default="structured")
+    parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "structured", "4:8", "2:4"], default="2:4")
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
     parser.add_argument("--eval_zero_shot", action="store_true", default=False)
     args = parser.parse_args()
+
+    # sparseGPT: 35.154
+    # thanos:    22.044
 
     # Setting seeds for reproducibility
     np.random.seed(args.seed)
@@ -129,6 +129,14 @@ def main():
         elif args.prune_method == "thanos":
             prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m,
                          blocksize=512, v_blocksize=256, structured=structured, perc_outliers=0.1)
+
+        # 0.1 - 18.7150344
+        # 0.2 - 15.3863601
+        # 0.3 - 13.4953479
+        # 0.4 - 12.0218992
+        # 0.5 -
+
+        # 11.532 -> 11.0742 -> 10.8961 -> 11.320151 ->
 
         print(args.prune_method + ' time %.2f' % (time.time() - tick))
 

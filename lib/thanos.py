@@ -96,12 +96,20 @@ class Thanos:
         if hasattr(self, 'X'):
             self.X.append(inp)
 
+        if not hasattr(self, ''):
+            self.X_squared_sum = torch.zeros(inp.shape, device=self.dev)
+
+
         self.H *= self.nsamples / (self.nsamples + tmp)
         self.scaler_row *= self.nsamples / (self.nsamples + tmp)
+
+        self.X_squared_sum *= self.nsamples / (self.nsamples + tmp)
 
         self.nsamples += tmp
 
         self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2 / self.nsamples
+
+        self.X_squared_sum += inp**2 / self.nsamples
 
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         self.H += inp.matmul(inp.t())
@@ -317,25 +325,26 @@ class Thanos:
     def __structured_n_m(self, W, Hinv, i1, i2, prune_n, prune_m, v_blocksize):
         W1 = W[:, i1:i2]
         blocksize = i2 - i1
+        rows = W1.shape[0]
 
         # Wanda metric
         tmp = torch.abs(W1) * torch.sqrt(self.scaler_row[i1:i2].reshape((1, -1)))
 
         mask = structured_n_m_sparsity_mask(tmp, prune_n, prune_m)
 
-        indices = torch.arange(0, blocksize, device=self.dev).unsqueeze(0).repeat(self.rows, 1)
-        indices_to_remove = indices[mask].reshape(self.rows, -1)
+        indices = torch.arange(0, blocksize, device=self.dev).unsqueeze(0).repeat(rows, 1)
+        indices_to_remove = indices[mask].reshape(rows, -1)
 
-        b = W1[mask].reshape(self.rows, -1)
+        b = W1[mask].reshape(rows, -1)
 
-        for r in range(self.rows // v_blocksize + 1):
+        for r in range(rows // v_blocksize + 1):
             r1 = r * v_blocksize
-            if r1 > self.rows:
+            if r1 > rows:
                 continue
 
-            r2 = min(r1 + v_blocksize, self.rows)
+            r2 = min(r1 + v_blocksize, rows)
 
-            v_current_block = min(self.rows - r1, v_blocksize)
+            v_current_block = min(rows - r1, v_blocksize)
 
             R = Hinv[indices_to_remove[r1:r2]].transpose(1, 2)
             batch_indices = torch.arange(v_current_block).view(-1, 1).expand(-1, blocksize // 2)
@@ -368,20 +377,39 @@ class Thanos:
 
         num_outliers = int(perc_outliers * self.rows)
         # Permutation based on the mean value of the Wanda metric (we place parameters for removal to be the first)
-        glob_metric = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
+        #glob_metric = torch.abs(W) * torch.sqrt(self.scaler_row).reshape((1, -1))
 
-        #plot_heatmap(glob_metric, "heat_map_initial.pdf")
+        glob_metric_rows_mean = torch.sum(W**2@self.X_squared_sum, dim=-1)
 
-        glob_metric_cols_mean = torch.mean(glob_metric, dim=0)
-        col_perm = torch.sort(glob_metric_cols_mean).indices
-        inv_col_perm = torch.sort(col_perm).indices
-
-        glob_metric_rows_mean = torch.mean(glob_metric, dim=1)
+        #glob_metric_rows_mean = torch.mean(glob_metric, dim=1)
         row_perm = torch.sort(glob_metric_rows_mean).indices
         inv_row_perm = torch.sort(row_perm).indices
 
+        W = W[row_perm, :]
+
+        # W_expanded = W.unsqueeze(2)                   # Shape: (c, b, 1)
+        # X_expanded = self.X_squared_sum.unsqueeze(0)  # Shape: (1, b, a)
+        # result = W_expanded**2 * X_expanded           # Shape: (c, b, a)
+        # result = result.permute(1, 0, 2)              # Shape: (b, c, a)
+        # sums = result.sum(dim=(1, 2))  # Sum over dimensions c and a
+
+        # Loop-based implementation to compute the sum of elements for each outer product
+        sums = torch.empty(self.columns)  # Resulting tensor of size (b,)
+        for i in range(self.columns):
+            # Compute the outer product for column `i` and sum all elements
+            outer_product = torch.outer(W[:-(num_outliers+1), i] ** 2, self.X_squared_sum[i, :])
+            sums[i] = outer_product.sum()
+
+        # plot_heatmap(glob_metric, "heat_map_initial.pdf")
+
+        #glob_metric = torch.abs(W[:-(num_outliers+1)]) * torch.sqrt(self.scaler_row).reshape((1, -1))
+
+        #glob_metric_cols_mean = torch.mean(glob_metric, dim=0)
+        col_perm = torch.sort(sums).indices
+        inv_col_perm = torch.sort(col_perm).indices
+
         H = (H[:, col_perm])[col_perm, :]
-        W = (W[row_perm, :])[:, col_perm]
+        W = W[:, col_perm]
         self.scaler_row = self.scaler_row[col_perm]
 
         Hinv = torch.linalg.inv(H)
@@ -449,6 +477,19 @@ class Thanos:
 
         Hinv = torch.linalg.inv(H)
 
+        if prune_n != 0:
+            num_outliers = int(perc_outliers * self.rows)
+
+            glob_metric_rows_mean = torch.sum(W ** 2 @ self.X_squared_sum, dim=-1)
+
+            # glob_metric_rows_mean = torch.mean(glob_metric, dim=1)
+            row_perm = torch.sort(glob_metric_rows_mean).indices
+            inv_row_perm = torch.sort(row_perm).indices
+
+            W = W[row_perm, :]
+
+            non_outlier_W = W[:-(num_outliers + 1)]
+
         zeros = 0
 
         # TODO: move this flag from here to args
@@ -470,11 +511,14 @@ class Thanos:
             if prune_n == 0 and not structured:  # unstructured
                 zeros += self.__unstructured(W, Hinv, i1, i2, zeros, sparsity, v_blocksize, const_mask)
             elif prune_n != 0:  # structured n:m sparsity
-                self.__structured_n_m(W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
+                self.__structured_n_m(non_outlier_W, Hinv, i1, i2, prune_n, prune_m, v_blocksize)
             Hinv = torch.linalg.inv(H[i2:, i2:])
 
         print('Layer pruning time %.2f' % (time.time() - tick))
         #print('Sparsity: ', torch.sum(W == 0.0).item() / (self.rows * self.columns))
+
+        if prune_n != 0:
+            W = (W[inv_row_perm, :])
 
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):
