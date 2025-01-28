@@ -225,12 +225,13 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
         subset = find_layers(block)
 
         if f"model.layers.{i}" in model.hf_device_map:
-            dev = model.hf_device_map[f"model.layers.{i}"]
-            inps, outs = inps.to(dev), outs.to(dev)
+            device = model.hf_device_map[f"model.layers.{i}"]
+            inps, outs = inps.to(device), outs.to(device)
             if attention_mask is not None:
-                attention_mask = attention_mask.to(dev)
+                attention_mask = attention_mask.to(device)
             if position_ids is not None:
-                position_ids = position_ids.to(dev)
+                position_ids = position_ids.to(device)
+
 
         wrapped_layers = {}
         for name in subset:
@@ -247,7 +248,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         with torch.no_grad():
             for j in range(args.nsamples):
-                block(inps[j].to(dev).unsqueeze(0), **block_args)
+                block(inps[j].to(device).unsqueeze(0), **block_args)
 
         for h in handles:
             h.remove()
@@ -280,7 +281,7 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
 
         with torch.no_grad():
             for j in range(args.nsamples):
-                outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
+                outs[j] = block(inps[j].to(device).unsqueeze(0), **block_args)[0]
 
         inps, outs = outs, inps
 

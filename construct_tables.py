@@ -4,6 +4,7 @@ import pickle
 import random
 import shutil
 
+import datasets
 import numpy as np
 import pandas as pd
 import torch
@@ -41,8 +42,8 @@ def get_llm(model_name, cache_dir="llm_weights"):
 
 
 def get_lists():
-    methods = ['Dense', 'Magnitude', 'SparseGPT', 'Wanda', 'Thanos']
-    sparsities = ['unstructured', '4:8', '2:4']
+    methods = ['SparseGPT', 'Wanda', 'Thanos', 'Thanos_outliers']
+    sparsities = ['unstructured', 'structured', '4:8', '2:4']
     models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b',
               'TinyLlama/TinyLlama-1.1B-Chat-v1.0', 'meta-llama/Llama-2-7b-hf', 'meta-llama/Llama-2-13b-hf',
               'meta-llama/Llama-2-70b-hf', 'meta-llama/Llama-3.2-1B', 'meta-llama/Llama-3.2-3B',
@@ -160,6 +161,7 @@ def main():
     #eval_table = load_table("eval_table")
     #eval_avg_table = load_table("eval_avg_table")
     #print_latex_table(eval_table)
+    #return 0
 
 
     parser = argparse.ArgumentParser()
@@ -170,8 +172,10 @@ def main():
     parser.add_argument("--recompute", default=False, type=bool)
     args = parser.parse_args()
 
-    args.sparsity_ratio = 0.5
+    args.sparsity_ratio = 0.3
     args.nsamples = 128
+
+    datasets.config.HF_DATASETS_TRUST_REMOTE_CODE = True
 
     # Setting seeds for reproducibility
     np.random.seed(args.seed)
@@ -204,8 +208,12 @@ def main():
 
         for sparsity_type in sparsities:
             prune_n, prune_m = 0, 0
-            if sparsity_type != "unstructured":
+            if sparsity_type == "4:8" or sparsity_type == "2:4":
                 prune_n, prune_m = map(int, sparsity_type.split(":"))
+
+            structured = False
+            if sparsity_type == "structured":
+                structured = True
 
             for method in methods:
                 # Check if we already have a computed values for this entries in tables:
@@ -228,13 +236,17 @@ def main():
                 try:
                     match method:
                         case 'Magnitude':
-                            prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                            prune_magnitude(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
                         case 'SparseGPT':
-                            prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                            prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
                         case 'Wanda':
-                            prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                            prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
                         case 'Thanos':
-                            prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                            prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m,
+                                         blocksize=512, v_blocksize=256, perc_outliers=0, structured=structured)
+                        case 'Thanos_outliers':
+                            prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m,
+                                         blocksize=512, v_blocksize=256, perc_outliers=0.1, structured=structured)
                         case _:
                             pass
                 except Exception as e:  # in case when the model is too large for this GPUs
@@ -245,6 +257,9 @@ def main():
                 if args.recompute or pd.isna(ppl_table.loc[(sparsity_type, method), model_name]):
                     ppl_pruned = eval_ppl(args, model, tokenizer, device)
                     ppl_table.loc[(sparsity_type, method), model_name] = ppl_pruned
+
+                    print("PPL: ", ppl_pruned)
+
                     # Save intermediate state to CSV
                     save_table(ppl_table, filename="ppl_table")
 
@@ -275,6 +290,9 @@ def main():
 
                     save_table(eval_table, filename="eval_table")
                     save_table(eval_avg_table, filename="eval_avg_table")
+
+                del model
+                torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':

@@ -59,7 +59,7 @@ def main():
     torch.random.manual_seed(args.seed)
 
     models = ["facebook/opt-125m", "facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b"]
-    sparsities = ['unstructured', '4:8', '2:4']
+    sparsities = ['structured']
     methods = ['Wanda', 'SparseGPT', 'Thanos']
 
     times = {}
@@ -71,8 +71,12 @@ def main():
     for model_name in models:
         for sparsity_type in sparsities:
             prune_n, prune_m = 0, 0
-            if sparsity_type != "unstructured":
+            if sparsity_type == "4:8" or sparsity_type == "2:4":
                 prune_n, prune_m = map(int, sparsity_type.split(":"))
+
+            structured = False
+            if sparsity_type == 'structured':
+                structured = True
 
             for method in methods:
                 model = get_llm(model_name, args.cache_dir)
@@ -89,11 +93,11 @@ def main():
                 tick = time.time()
                 match method:
                     case 'SparseGPT':
-                        prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
                     case 'Wanda':
-                        prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
                     case 'Thanos':
-                        prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+                        prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured, perc_outliers=0.1)
                     case _:
                         pass
 
