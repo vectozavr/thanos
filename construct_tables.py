@@ -41,7 +41,7 @@ def get_llm(model_name, cache_dir="llm_weights", device_map="auto"):
 
 
 def get_lists():
-    methods = ['Magnitude', 'Wanda', 'SparseGPT', 'Thanos', 'Thanos_outliers']
+    methods = ['Dense', 'Magnitude', 'Wanda', 'SparseGPT', 'Thanos', 'Thanos_outliers']
     sparsities = ['unstructured', 'structured', '4:8', '2:4']
     models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b',
               'TinyLlama/TinyLlama-1.1B-Chat-v1.0', 'meta-llama/Llama-2-7b-hf', 'meta-llama/Llama-2-13b-hf',
@@ -219,6 +219,9 @@ def main():
             structured = False
             if sparsity_type == "structured":
                 structured = True
+                args.sparsity_ratio = 0.3
+            else:
+                args.sparsity_ratio = 0.5
 
             for method in methods:
                 # Check if we already have a computed values for this entries in tables:
