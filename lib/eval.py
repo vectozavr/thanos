@@ -29,6 +29,9 @@ def eval_ppl(args, model, tokenizer, device=torch.device("cuda:0")):
 
 # Function to evaluate perplexity (ppl) specifically on the wikitext dataset
 def eval_ppl_wikitext(model, testenc, bs=1, device=None):
+    if len(model.hf_device_map) == 1:
+        device = model.hf_device_map['']
+
     # Get input IDs
     testenc = testenc.input_ids
 

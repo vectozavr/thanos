@@ -27,14 +27,13 @@ print('accelerate', version('accelerate'))
 print('# of gpus: ', torch.cuda.device_count())
 
 
-def get_llm(model_name, cache_dir="llm_weights"):
+def get_llm(model_name, cache_dir="llm_weights", device_map="auto"):
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16,
         cache_dir=cache_dir,
         low_cpu_mem_usage=True,
-        device_map="auto",
-        trust_remote_code=True
+        device_map=device_map
     )
 
     model.seqlen = model.config.max_position_embeddings
@@ -42,7 +41,7 @@ def get_llm(model_name, cache_dir="llm_weights"):
 
 
 def get_lists():
-    methods = ['SparseGPT', 'Wanda', 'Thanos', 'Thanos_outliers']
+    methods = ['Magnitude', 'Wanda', 'SparseGPT', 'Thanos', 'Thanos_outliers']
     sparsities = ['unstructured', 'structured', '4:8', '2:4']
     models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b',
               'TinyLlama/TinyLlama-1.1B-Chat-v1.0', 'meta-llama/Llama-2-7b-hf', 'meta-llama/Llama-2-13b-hf',
@@ -160,7 +159,7 @@ def main():
     #ppl_table = load_table("ppl_table")
     #eval_table = load_table("eval_table")
     #eval_avg_table = load_table("eval_avg_table")
-    #print_latex_table(eval_table)
+    #print_latex_table(ppl_table)
     #return 0
 
 
@@ -170,10 +169,16 @@ def main():
     parser.add_argument("--eval_zero_shot", default=True, type=bool)
     parser.add_argument("--clear_cache", default=False, type=bool)
     parser.add_argument("--recompute", default=False, type=bool)
+    parser.add_argument("--store_full_model_on_GPUs", action="store_true",  default=False)
+
     args = parser.parse_args()
 
     args.sparsity_ratio = 0.3
     args.nsamples = 128
+
+    device_map = 'cpu'
+    if args.store_full_model_on_GPUs:
+        device_map = 'auto'
 
     datasets.config.HF_DATASETS_TRUST_REMOTE_CODE = True
 
@@ -221,7 +226,7 @@ def main():
                     continue
 
                 try:
-                    model = get_llm(model_name, args.cache_dir)
+                    model = get_llm(model_name, args.cache_dir, device_map=device_map)
                     model.eval()
                     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
                 except Exception as e:  # in case when the model is too large for this GPUs
@@ -252,6 +257,15 @@ def main():
                 except Exception as e:  # in case when the model is too large for this GPUs
                     print(f"Caught exception: {e}")
                     continue
+
+                # if the model was on CPU, we need to load it on GPU in order to evaluate ppl (otherwise it will be very slow)
+                if not args.store_full_model_on_GPUs:
+                    save_path = "out/" + model_name + "_pruned"
+                    model.save_pretrained(save_path)
+                    model = get_llm(save_path, device_map="auto")
+
+                    if os.path.exists(save_path) and os.path.isdir(save_path):
+                        shutil.rmtree(save_path)
 
                 # Perplexity evaluation
                 if args.recompute or pd.isna(ppl_table.loc[(sparsity_type, method), model_name]):

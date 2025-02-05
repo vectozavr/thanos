@@ -15,6 +15,7 @@ import sys
 # TODO: move this flag from here
 is_compute_l2 = False
 
+
 def plot_heatmap_full_sized(tensor, filename):
     """
     Save a square mask tensor as an RGB image.
@@ -131,6 +132,8 @@ def prepare_calibration_input(model, dataloader, device, nsamples):
 
     if "model.embed_tokens" in model.hf_device_map:
         device = model.hf_device_map["model.embed_tokens"]
+    elif len(model.hf_device_map) == 1:
+        device = model.hf_device_map['']
 
     dtype = next(iter(model.parameters())).dtype
 
@@ -231,6 +234,16 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                 attention_mask = attention_mask.to(device)
             if position_ids is not None:
                 position_ids = position_ids.to(device)
+        elif len(model.hf_device_map) == 1:
+            device = torch.device('cuda:0')
+            block = block.to(device=device)
+
+            if attention_mask is not None:
+                block_args["attention_mask"] = block_args["attention_mask"].to(device)
+            if position_ids is not None:
+                block_args["position_ids"] = block_args["position_ids"].to(device)
+            if position_embeddings is not None:
+                block_args["position_embeddings"] = tuple(e.to(device) for e in block_args["position_embeddings"])
 
 
         wrapped_layers = {}
@@ -283,6 +296,12 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
             for j in range(args.nsamples):
                 outs[j] = block(inps[j].to(device).unsqueeze(0), **block_args)[0]
 
+        if len(model.hf_device_map) == 1:
+            block = block.to(device=model.hf_device_map[''])
+
+        blocks[i] = block
+        torch.cuda.empty_cache()
+
         inps, outs = outs, inps
 
     model.config.use_cache = use_cache
@@ -302,6 +321,8 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
 
     if "model.embed_tokens" in model.hf_device_map:
         dev = model.hf_device_map["model.embed_tokens"]
+    elif len(model.hf_device_map) == 1:
+        dev = model.hf_device_map['']
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
@@ -357,6 +378,17 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
                 attention_mask = attention_mask.to(dev)
             if position_ids is not None:
                 position_ids = position_ids.to(dev)
+        elif len(model.hf_device_map) == 1:
+            dev = torch.device('cuda:0')
+            block = block.to(device=dev)
+
+            if attention_mask is not None:
+                block_args["attention_mask"] = block_args["attention_mask"].to(dev)
+            if position_ids is not None:
+                block_args["position_ids"] = block_args["position_ids"].to(dev)
+            if position_embeddings is not None:
+                block_args["position_embeddings"] = tuple(e.to(dev) for e in block_args["position_embeddings"])
+
 
         subset = find_layers(block)
 
@@ -392,6 +424,9 @@ def prune_sparsegpt(args, model, tokenizer, dev, prune_n=0, prune_m=0, structure
         for j in range(args.nsamples):
             outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
 
+        if len(model.hf_device_map) == 1:
+            block = block.to(device=model.hf_device_map[''])
+
         blocks[i] = block
         torch.cuda.empty_cache()
 
@@ -419,6 +454,8 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
 
     if "model.embed_tokens" in model.hf_device_map:
         dev = model.hf_device_map["model.embed_tokens"]
+    elif len(model.hf_device_map) == 1:
+        dev = model.hf_device_map['']
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
@@ -478,6 +515,16 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
                 attention_mask = attention_mask.to(dev)
             if position_ids is not None:
                 position_ids = position_ids.to(dev)
+        elif len(model.hf_device_map) == 1:
+            dev = torch.device('cuda:0')
+            block = block.to(device=dev)
+
+            if attention_mask is not None:
+                block_args["attention_mask"] = block_args["attention_mask"].to(dev)
+            if position_ids is not None:
+                block_args["position_ids"] = block_args["position_ids"].to(dev)
+            if position_embeddings is not None:
+                block_args["position_embeddings"] = tuple(e.to(dev) for e in block_args["position_embeddings"])
 
         subset = find_layers(block)
 
@@ -523,6 +570,9 @@ def prune_thanos(args, model, tokenizer, dev, prune_n=0, prune_m=0, blocksize=25
         print("Recomputing the whole layers output...")
         for j in range(args.nsamples):
             outs[j] = block(inps[j].to(dev).unsqueeze(0), **block_args)[0]
+
+        if len(model.hf_device_map) == 1:
+            block = block.to(device=model.hf_device_map[''])
 
         blocks[i] = block
         torch.cuda.empty_cache()

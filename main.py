@@ -10,6 +10,8 @@ from importlib.metadata import version
 from lib.prune import prune_wanda, prune_magnitude, prune_thanos, prune_sparsegpt, check_sparsity
 from lib.eval import eval_ppl, eval_zero_shot
 
+from accelerate import dispatch_model
+
 from lm_eval import evaluator
 
 # In case you want to select particular GPUs
@@ -25,13 +27,13 @@ print('accelerate', version('accelerate'))
 print('# of gpus: ', torch.cuda.device_count())
 
 
-def get_llm(model_name, cache_dir="llm_weights"):
+def get_llm(model_name, cache_dir="llm_weights", device_map="auto"):
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16,
         cache_dir=cache_dir,
         low_cpu_mem_usage=True,
-        device_map="auto"
+        device_map=device_map
     )
 
     model.seqlen = model.config.max_position_embeddings
@@ -76,20 +78,19 @@ def main():
     # facebook/opt-175b
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Meta-Llama-3-8B")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.3, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "structured", "4:8", "2:4"], default="structured")
-    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="thanos")
+    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="magnitude")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
     parser.add_argument("--eval_zero_shot", action="store_true", default=False)
-    args = parser.parse_args()
+    parser.add_argument("--store_full_model_on_GPUs", action="store_true",  default=False)
 
-    # sparseGPT: 35.154
-    # thanos:    22.044
+    args = parser.parse_args()
 
     # Setting seeds for reproducibility
     np.random.seed(args.seed)
@@ -107,7 +108,11 @@ def main():
 
     print(f"loading llm model {args.model}")
 
-    model = get_llm(args.model, args.cache_dir)
+    device_map = 'cpu'
+    if args.store_full_model_on_GPUs:
+        device_map = 'auto'
+
+    model = get_llm(args.model, args.cache_dir, device_map=device_map)
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False)
 
@@ -130,11 +135,6 @@ def main():
             prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m,
                          blocksize=512, v_blocksize=256, structured=structured, perc_outliers=0.1)
 
-        # now: 36.608
-        # aft: 48.997
-
-        # 11.532 -> 11.0742 -> 10.8961 -> 11.320151 ->
-
         print(args.prune_method + ' time %.2f' % (time.time() - tick))
 
     ################################################################
@@ -143,6 +143,13 @@ def main():
     print(f"sparsity sanity check {sparsity_ratio:.4f}")
     print("*"*30)
     ################################################################
+
+    # if the model was on CPU, we need to load it on GPU in order to evaluate ppl (otherwise it will be very slow)
+    if not args.store_full_model_on_GPUs:
+        save_path = "out/" + args.model + "_pruned_" + args.prune_method
+        model.save_pretrained(save_path)
+        model = get_llm(save_path, device_map="auto")
+
 
     ppl_test = eval_ppl(args, model, tokenizer, device)
     print(f"wikitext perplexity {ppl_test}")
