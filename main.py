@@ -77,13 +77,25 @@ def main():
     # facebook/opt-66b
     # facebook/opt-175b
 
+    # Wanda llama3-8B structured 30% - 158.77955627441406
+    # My idea llama3-8B structured 30% - 135.0235137939453 (K=10)
+    # My idea llama3-8B structured 30% - 81.68241119384766 (K=50)
+
+    # Wanda llama2-7B structured 30% - 81.01302337646484
+    # My idea llama2-7B structured 30% - 51.966026306152344 (K=50)
+    # My idea llama2-7B structured 30% - 63.700531005859375 (K=10)
+    # Thanos + my new idea llama2-7B structured 30% - 26.283288955688477 (K=10)
+    # Thanos 0.1 llama2-7B structured 30% - 28.83777618408203
+    # Thanos 0.0 llama2-7B structured 30% - 30.87148666381836
+
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, help='LLaMA model', default="facebook/opt-125m")
+    parser.add_argument('--model', type=str, help='LLaMA model', default="meta-llama/Llama-2-7b-hf")
     parser.add_argument('--seed', type=int, default=0, help='Seed for sampling the calibration data.')
     parser.add_argument('--nsamples', type=int, default=128, help='Number of calibration samples.')
     parser.add_argument('--sparsity_ratio', type=float, default=0.3, help='Sparsity level')
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "structured", "4:8", "2:4"], default="structured")
-    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="magnitude")
+    parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", "thanos"], default="thanos")
     parser.add_argument("--cache_dir", default="llm_weights", type=str)
     parser.add_argument('--save', type=str, default="out/llama_7b/unstructured/", help='Path to save results.')
     parser.add_argument('--save_model', type=str, help='Path to save the pruned model.')
@@ -133,7 +145,7 @@ def main():
             prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, structured=structured)
         elif args.prune_method == "thanos":
             prune_thanos(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m,
-                         blocksize=512, v_blocksize=256, structured=structured, perc_outliers=0.1)
+                         blocksize=512, v_blocksize=256, structured=structured, perc_outliers=0.0)
 
         print(args.prune_method + ' time %.2f' % (time.time() - tick))
 
