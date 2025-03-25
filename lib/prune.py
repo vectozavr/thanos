@@ -6,6 +6,8 @@ from .sparsegpt import SparseGPT
 from .thanos import Thanos
 from .layerwrapper import WrappedGPT
 from .data import get_loaders
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 import numpy as np
@@ -46,23 +48,24 @@ def plot_heatmap_full_sized(tensor, filename):
     image.save(filename + ".png")
 
 
-def plot_heatmap(tensor, filename, title=None):
-    import matplotlib.pyplot as plt
-
+def plot_heatmap(tensor, out_path="heatmap.pdf"):
     vmin, vmax = np.percentile(tensor.cpu().numpy(), [0, 98])
 
     m, n = tensor.shape
 
-    plt.figure(figsize=(8, 8), dpi=100)
-    plt.imshow(tensor.cpu().numpy(), cmap='viridis', vmin=vmin, vmax=vmax, extent=[0, n, 0, m])
-    plt.colorbar(label='Values')
-    plt.title(title)
-    plt.xlabel('Columns')
-    plt.ylabel('Rows')
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=100)
+    im = ax.imshow(tensor.cpu().numpy(), cmap='viridis', vmin=vmin, vmax=vmax, extent=[0, n, 0, m])
 
+    # Create an axis on the right for the color bar, and match the heat map size
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.1)  # Adjust size and padding
+    plt.colorbar(im, cax=cax, label='Values')
+
+    ax.set_xlabel('Columns')
+    ax.set_ylabel('Rows')
     plt.tight_layout(pad=0)
 
-    plt.savefig(filename, format='pdf', dpi=100)
+    plt.savefig(out_path, format='pdf', dpi=100)
     plt.close()
 
 
