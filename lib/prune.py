@@ -1,4 +1,5 @@
-import time 
+import math
+import time
 import torch
 import torch.nn as nn
 
@@ -11,6 +12,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 import numpy as np
+from sklearn.cluster import KMeans
 from PIL import Image
 import sys
 
@@ -287,7 +289,49 @@ def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0
                 indices = sort_res[1][:,:int(W_metric.shape[1]*args.sparsity_ratio)]
                 W_mask.scatter_(1, indices, True)
             else:
-                glob_tmp_mean = torch.mean(W_metric, axis=0)
+
+                # Experimental (New idea with clustering):
+                '''
+                K = 10
+                # Convert to numpy (if needed for scikit-learn)
+                W_metric_np = W_metric.cpu().numpy()
+
+                # Run standard k-means clustering on the rows
+                kmeans = KMeans(n_clusters=K, random_state=0).fit(W_metric_np)
+                labels_np = kmeans.labels_  # a numpy array of shape (c,)
+
+                # Convert labels to a torch tensor
+                labels = torch.tensor(labels_np)
+
+                # Now, obtain a permutation of indices that sorts by the cluster label
+                _, perm = torch.sort(labels)
+                inv_perm = torch.argsort(perm)
+
+                # Permute the rows of W
+                W_permuted = subset[name].weight.data[perm]
+
+                for k in range(K):
+                    vert_bs = math.ceil(W_permuted.shape[0]/K)
+                    start = k*vert_bs
+                    end = min(start + vert_bs, W_permuted.shape[0])
+
+                    W_block = W_permuted[start:end]
+                    W_block_metric = torch.abs(W_block) * torch.sqrt(wrapped_layers[name].scaler_row.reshape((1, -1)))
+
+                    block_tmp_mean = torch.mean(W_block_metric, dim=0)
+                    values, indices = torch.topk(block_tmp_mean, int(args.sparsity_ratio * W_block_metric.shape[1]), largest=False)
+                    W_mask = torch.zeros_like(W_block_metric, dtype=torch.bool, device=W_block_metric.device)
+                    W_mask[:, indices] = True
+
+                    W_block[W_mask] = 0
+
+                W_pruned = W_permuted[inv_perm]
+
+                subset[name].weight.data = W_pruned
+                '''
+                # End of experimental
+
+                glob_tmp_mean = torch.mean(W_metric, dim=0)
                 values, indices = torch.topk(glob_tmp_mean, int(args.sparsity_ratio * W_metric.shape[1]), largest=False)
 
                 W_mask = torch.zeros_like(W_metric, dtype=torch.bool, device=W_metric.device)

@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import transformers
 import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
 
 
 def plot_heatmap(tensor, filename, title=None):
@@ -107,11 +108,11 @@ class Thanos:
 
         self.nsamples += tmp
 
-        self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2 / self.nsamples
+        self.scaler_row += torch.norm(inp.type(torch.float32), p=2, dim=1) ** 2 / self.nsamples
 
         self.X_squared_sum += inp**2 / self.nsamples
 
-        inp = math.sqrt(2 / self.nsamples) * inp.float()
+        inp = math.sqrt(2 / self.nsamples) * inp.type(torch.float32)
         self.H += inp.matmul(inp.t())
 
     # Similar to SparseGPT but with dynamic mask + Wanda metric
