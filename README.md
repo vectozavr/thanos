@@ -8,11 +8,11 @@ GenAI Center of Excellence, King Abdullah University of Science and Technology, 
 [Paper](link)
 
 ```bibtex
-@article{ilin2024thanos,
-  title={The name of the paper will be here}, 
-  author={Ivan Ilin, Peter Richtarik},
-  year={2024},
-  journal={arXiv preprint arXiv:}
+@article{ilin2025thanos,
+  title={Thanos: A Block-wise Pruning Algorithm for Efficient Large Language Model Compression},
+  author={Ilin, Ivan and Richtarik, Peter},
+  journal={arXiv preprint arXiv:2504.05346},
+  year={2025}
 }
 ```
 
